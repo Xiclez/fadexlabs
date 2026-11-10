@@ -25,9 +25,26 @@ function GoogleError() {
   return code && GOOGLE_ERRORS[code] ? <FormMessage kind="error">{GOOGLE_ERRORS[code]}</FormMessage> : null;
 }
 
+function safeNext(path: string | null) {
+  return path && path.startsWith("/") && !path.startsWith("//") && !path.includes("\\") ? path : "/cuenta";
+}
+
 export default function LoginPage() {
+  return (
+    <AuthShell title="Ingresar" subtitle="Accede a tus compras, descargas y herramientas."
+      footer={<>¿No tienes cuenta? <Link href="/registro" className="text-cyan hover:text-white">Créala aquí</Link></>}>
+      <Suspense fallback={<p className="text-sm text-muted">Cargando…</p>}>
+        <LoginForm />
+      </Suspense>
+    </AuthShell>
+  );
+}
+
+/** ?next= lleva de vuelta a donde se pidió el login (p. ej. autorizar la app de escritorio). */
+function LoginForm() {
   const { login } = useAuth();
   const router = useRouter();
+  const next = safeNext(useSearchParams().get("next"));
   const [error, setError] = useState("");
   const [pending, setPending] = useState(false);
 
@@ -38,7 +55,7 @@ export default function LoginPage() {
     setPending(true);
     try {
       await login(String(form.get("email")), String(form.get("password")));
-      router.push("/cuenta");
+      router.push(next);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo conectar. Intenta de nuevo.");
     } finally {
@@ -47,21 +64,18 @@ export default function LoginPage() {
   }
 
   return (
-    <AuthShell title="Ingresar" subtitle="Accede a tus compras, descargas y herramientas."
-      footer={<>¿No tienes cuenta? <Link href="/registro" className="text-cyan hover:text-white">Créala aquí</Link></>}>
-      <div className="space-y-5">
-        <Suspense fallback={null}><GoogleError /></Suspense>
-        <GoogleButton next="/cuenta" />
-        <form onSubmit={onSubmit} className="space-y-5">
-          {error && <FormMessage kind="error">{error}</FormMessage>}
-          <Field label="Email" name="email" type="email" autoComplete="email" required />
-          <Field label="Contraseña" name="password" type="password" autoComplete="current-password" required />
-          <Button type="submit" disabled={pending} className="w-full">{pending ? "Ingresando…" : "Ingresar"}</Button>
-          <p className="text-center text-sm">
-            <Link href="/recuperar" className="text-muted hover:text-white">¿Olvidaste tu contraseña?</Link>
-          </p>
-        </form>
-      </div>
-    </AuthShell>
+    <div className="space-y-5">
+      <GoogleError />
+      <GoogleButton next={next} />
+      <form onSubmit={onSubmit} className="space-y-5">
+        {error && <FormMessage kind="error">{error}</FormMessage>}
+        <Field label="Email" name="email" type="email" autoComplete="email" required />
+        <Field label="Contraseña" name="password" type="password" autoComplete="current-password" required />
+        <Button type="submit" disabled={pending} className="w-full">{pending ? "Ingresando…" : "Ingresar"}</Button>
+        <p className="text-center text-sm">
+          <Link href="/recuperar" className="text-muted hover:text-white">¿Olvidaste tu contraseña?</Link>
+        </p>
+      </form>
+    </div>
   );
 }

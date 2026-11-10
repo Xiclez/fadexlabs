@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -112,7 +113,47 @@ class SessionOut(BaseModel):
     user_agent: str
     ip: str
     current: bool
+    kind: str = "web"  # web | desktop (equipo con DJ Library Upgrader)
 
 
 class MessageOut(BaseModel):
     detail: str
+
+
+# ---------- app de escritorio ----------
+
+_B64URL = r"^[A-Za-z0-9_-]+$"
+
+
+class DesktopAuthorizeIn(BaseModel):
+    """Lo que la página /escritorio/autorizar recibe de la app (por la URL) y reenvía a la API."""
+    code_challenge: str = Field(min_length=43, max_length=43, pattern=_B64URL)  # SHA-256 en base64url
+    code_challenge_method: Literal["S256"] = "S256"
+    state: str = Field(min_length=16, max_length=128, pattern=_B64URL)
+    redirect_port: int = Field(ge=1024, le=65535)
+    device_name: str = Field(default="", max_length=60)
+
+
+class DesktopAuthorizeOut(BaseModel):
+    redirect_url: str  # siempre http://127.0.0.1:<puerto>/callback?code=…&state=…
+
+
+class DesktopTokenIn(BaseModel):
+    code: str = Field(min_length=20, max_length=128)
+    code_verifier: str = Field(min_length=43, max_length=128, pattern=_B64URL)
+    redirect_port: int = Field(ge=1024, le=65535)
+
+
+class DesktopRefreshIn(BaseModel):
+    refresh_token: str = Field(min_length=20, max_length=128)
+
+
+class DesktopTokenOut(AccessOut):
+    refresh_token: str
+
+
+class DesktopLatestOut(BaseModel):
+    version: str
+    url: str
+    sha256: str
+    notas: str

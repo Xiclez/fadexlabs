@@ -239,7 +239,7 @@ async def sessions(user: CurrentUser, claims: Claims, db: DB) -> list[SessionOut
             RefreshToken.family_id == family_id).order_by(RefreshToken.created_at.desc()).limit(1))).scalar_one()
         out.append(SessionOut(id=family_id, created_at=svc.utc(first), last_used_at=svc.utc(last),
                               user_agent=latest.user_agent, ip=latest.ip,
-                              current=str(family_id) == claims["sid"]))
+                              current=str(family_id) == claims["sid"], kind=latest.kind or "web"))
     return sorted(out, key=lambda s: s.last_used_at, reverse=True)
 
 

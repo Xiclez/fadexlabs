@@ -79,6 +79,9 @@ class RefreshToken(Base):
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     user_agent: Mapped[str] = mapped_column(String(256), default="")
     ip: Mapped[str] = mapped_column(String(64), default="")
+    # web: cookie httpOnly del navegador · desktop: app de escritorio (token en el cuerpo, ver routers/desktop.py).
+    # Un token solo se canjea por el endpoint de su tipo.
+    kind: Mapped[str] = mapped_column(String(16), default="web", server_default="web")
 
     user: Mapped[User] = relationship(back_populates="sessions")
 

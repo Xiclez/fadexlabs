@@ -169,7 +169,11 @@ function Sessions({ onLogoutAll }: { onLogoutAll: () => Promise<void> }) {
             {sessions.map((s) => (
               <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm">
                 <div>
-                  <p>{describeAgent(s.user_agent)} {s.current && <span className="fx-label ml-2 text-lime">Esta sesión</span>}</p>
+                  <p>
+                    {s.kind === "desktop" ? s.user_agent : describeAgent(s.user_agent)}
+                    {s.kind === "desktop" && <span className="fx-label ml-2 text-cyan">App de escritorio</span>}
+                    {s.current && <span className="fx-label ml-2 text-lime">Esta sesión</span>}
+                  </p>
                   <p className="text-xs text-dim">{s.ip} · último uso {fmt(s.last_used_at)}</p>
                 </div>
                 {!s.current && (

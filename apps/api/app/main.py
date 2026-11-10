@@ -5,7 +5,7 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.ratelimit import get_redis
 from app.db import engine
-from app.routers import admin, auth, beta, google, tools
+from app.routers import admin, auth, beta, desktop, google, tools
 
 settings = get_settings()
 app = FastAPI(
@@ -41,6 +41,7 @@ async def security_headers(request: Request, call_next):
 
 app.include_router(auth.router)
 app.include_router(google.router)
+app.include_router(desktop.router)
 app.include_router(beta.router)
 app.include_router(tools.router)
 app.include_router(admin.router)

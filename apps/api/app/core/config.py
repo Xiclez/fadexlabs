@@ -95,6 +95,14 @@ class Settings(BaseSettings):
     rclone_bin: str = "rclone"
     rclone_remote: str = ""                          # p. ej. "gdrive:FADEX/Entregas"; vacío = entrega pendiente (manual)
 
+    # App de escritorio (DJ Library Upgrader para Windows): login con navegador + loopback + PKCE (RFC 8252)
+    desktop_code_ttl_seconds: int = 120              # código de autorización de un solo uso
+    # Última versión publicada del instalador (GET /api/desktop/latest). Sin versión: 404 (no hay descarga).
+    desktop_version: str = ""
+    desktop_url: str = ""                            # https://… del .exe
+    desktop_sha256: str = ""
+    desktop_notes: str = ""
+
     worker_poll_seconds: float = 5
     services_dir: str = ""                           # código vendorizado de las herramientas; vacío = <repo>/services
 

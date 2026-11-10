@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 
 import { BetaCounter } from "@/components/beta-counter";
+import { DesktopDownload } from "@/components/desktop-download";
 import { ToolAccess } from "@/components/tool-access";
 import { Container, CutCard, DisplayTitle, Label } from "@/components/ui";
 import { tools } from "@/content/site";
@@ -41,6 +42,8 @@ export default function HerramientasPage() {
           </section>
         ))}
       </div>
+
+      <DesktopDownload />
 
       <p className="mt-10 max-w-3xl text-xs text-dim">
         DJ Library Upgrader trabaja sobre fuentes que tienes derecho a usar. FADEX Labs no vende ni distribuye música de terceros.

@@ -116,7 +116,10 @@ export type Session = {
   user_agent: string;
   ip: string;
   current: boolean;
+  kind: "web" | "desktop";  // desktop: equipo con DJ Library Upgrader (user_agent = "DJ Library Upgrader · <equipo>")
 };
+
+export type DesktopRelease = { version: string; url: string; sha256: string; notas: string };
 
 export type Message = { detail: string };
 
