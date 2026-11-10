@@ -57,7 +57,8 @@ def _load_keys() -> _Keys:
         return _Keys
     s = get_settings()
     if s.jwt_private_key:
-        priv = serialization.load_pem_private_key(s.jwt_private_key.encode(), password=None)
+        # en un .env el PEM va en una sola línea con "\n" literales
+        priv = serialization.load_pem_private_key(s.jwt_private_key.replace("\\n", "\n").encode(), password=None)
     elif s.env in ("dev", "test"):
         priv = Ed25519PrivateKey.generate()  # efímera: los tokens no sobreviven a un reinicio
     else:

@@ -146,6 +146,26 @@ los errores).
 3. `kubectl apply -k deploy/k3s`
 4. En Cloudflare Zero Trust, apunta el hostname del tunnel a `http://traefik.kube-system.svc.cluster.local:80`.
 
+## Producción en un solo servidor (Docker Compose)
+
+Para un VPS sin Kubernetes, o donde los puertos 80/443 ya son de otro proxy. `docker-compose.prod.yml`
+levanta Postgres, Redis, API, worker, web y slskd, y publica solo la web en `127.0.0.1:3020`; Next
+reenvía `/api` a la API. El dominio llega por un Cloudflare Tunnel apuntado a `http://localhost:3020`.
+
+```bash
+bash deploy/prod/setup.sh        # una vez: genera .env, deploy/slskd/slskd.yml, carpetas y copia rclone.conf
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml ps
+docker compose -f docker-compose.prod.yml logs -f worker
+```
+
+- `setup.sh` pide el dominio, una cuenta de Soulseek **solo para FADEX**, la carpeta de Drive y el token
+  de ACRCloud. Todo lo que genera está en `.gitignore`.
+- Los límites de librería en `.env` vienen reducidos (zip de 2 GB, 500 pistas) para un disco chico.
+- Actualizar: `git pull && docker compose -f docker-compose.prod.yml up -d --build`.
+- Dar rol de administrador:
+  `docker compose -f docker-compose.prod.yml exec api python scripts/make_admin.py correo@ejemplo.com`
+
 ## Clúster local de pruebas (k3d)
 
 `deploy/k3s-local` levanta lo mismo que producción en un k3s dentro de Docker: imágenes construidas en

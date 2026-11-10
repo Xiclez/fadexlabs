@@ -1,0 +1,84 @@
+# FADEX Labs en un solo servidor con Docker Compose (sin Kubernetes).
+# Pensado para un VPS donde los puertos 80/443 ya son de otro proxy: solo publica la web en
+# 127.0.0.1:${WEB_PORT} y un Cloudflare Tunnel (cloudflared del host) apunta el dominio ahí.
+# Next reenvía /api a la API, así que todo sale por un solo puerto.
+#
+#   bash deploy/prod/setup.sh                                   # una vez: genera .env, slskd.yml y carpetas
+#   docker compose -f docker-compose.prod.yml up -d --build
+#   docker compose -f docker-compose.prod.yml logs -f worker
+name: fadexlabs
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fadex
+      POSTGRES_DB: fadex
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ejecuta antes deploy/prod/setup.sh}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fadex"]
+      interval: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+
+  migrate:
+    build: ./apps/api
+    image: fadex/api:prod
+    command: ["alembic", "upgrade", "head"]
+    env_file: [.env]
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    image: fadex/api:prod
+    restart: unless-stopped
+    env_file: [.env]
+    volumes: [./data:/data]          # subidas y resultados, compartidos con el worker
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_started}
+
+  # Procesa los trabajos: Tracklist ID y DJ Library Upgrader (uno de cada uno a la vez).
+  worker:
+    build: {context: ., dockerfile: apps/worker/Dockerfile}
+    image: fadex/worker:prod
+    restart: unless-stopped
+    env_file: [.env]
+    environment:
+      RCLONE_CONFIG: /rclone/rclone.conf
+    volumes:
+      - ./data:/data
+      - ./deploy/rclone:/rclone      # rclone.conf (rclone renueva ahí el token de Drive)
+    stop_grace_period: 60s           # al detenerlo, el trabajo en curso vuelve a la cola
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  web:
+    build: ./apps/web
+    image: fadex/web:prod
+    restart: unless-stopped
+    ports: ["127.0.0.1:${WEB_PORT:-3020}:3000"]   # solo local: lo expone el Cloudflare Tunnel
+    depends_on: [api]
+
+  # Soulseek para el DJ Library Upgrader. Su interfaz web no se publica: solo la usa el worker.
+  slskd:
+    image: slskd/slskd:latest
+    restart: unless-stopped
+    user: "10001:10001"              # mismo uid que el worker, que borra las descargas al terminar
+    environment:
+      - SLSKD_REMOTE_CONFIGURATION=false
+    ports: ["${SLSK_PORT:-50302}:${SLSK_PORT:-50302}/tcp"]   # escucha de Soulseek
+    volumes:
+      - ./data/slskd/app:/app
+      - ./deploy/slskd/slskd.yml:/app/slskd.yml:ro
+      - ./data/slskd/downloads:/downloads
+      - ./data/slskd/incomplete:/incomplete
+
+volumes:
+  pgdata:

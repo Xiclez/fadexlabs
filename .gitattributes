@@ -1,0 +1,2 @@
+# Los scripts corren en Linux aunque el repo se edite en Windows
+*.sh text eol=lf
