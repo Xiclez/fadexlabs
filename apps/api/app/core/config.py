@@ -97,10 +97,12 @@ class Settings(BaseSettings):
 
     # App de escritorio (DJ Library Upgrader para Windows): login con navegador + loopback + PKCE (RFC 8252)
     desktop_code_ttl_seconds: int = 120              # código de autorización de un solo uso
-    # Última versión publicada del instalador (GET /api/desktop/latest). Sin versión: 404 (no hay descarga).
-    desktop_version: str = ""
-    desktop_url: str = ""                            # https://… del .exe
-    desktop_sha256: str = ""
+    # Instalador publicado (GET /api/desktop/latest y /api/desktop/download). Lo normal: copiar el .exe a
+    # <data_dir>/desktop/ y poner su nombre en desktop_file; la versión sale del nombre y el SHA-256 se calcula.
+    desktop_file: str = ""                           # p. ej. FADEX-Upgrader-0.1.0-setup.exe
+    desktop_version: str = ""                        # vacío = se lee del nombre del archivo
+    desktop_url: str = ""                            # vacío = https://<sitio>/api/desktop/download
+    desktop_sha256: str = ""                         # vacío = se calcula del archivo
     desktop_notes: str = ""
 
     worker_poll_seconds: float = 5

@@ -17,12 +17,16 @@ viajan en el cuerpo (no hay cookie fuera del navegador) y solo valen en /api/aut
 import base64
 import hashlib
 import hmac
+import asyncio
 import json
+import os
 import re
 import uuid
+from pathlib import Path
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request, status
+from fastapi.responses import FileResponse
 
 from app.core import ratelimit
 from app.core.config import get_settings
@@ -105,11 +109,53 @@ async def logout(body: DesktopRefreshIn, db: DB) -> None:
         await db.commit()
 
 
+# ---------- instalador ----------
+
+_VERSION_RE = re.compile(r"(\d+\.\d+\.\d+)")
+_sha_cache: dict[tuple, str] = {}
+
+
+def _installer() -> Path | None:
+    """El .exe publicado en <data_dir>/desktop/ (solo el nombre: nunca una ruta fuera de esa carpeta)."""
+    name = os.path.basename(get_settings().desktop_file.strip())
+    if not name.lower().endswith(".exe"):
+        return None
+    path = Path(get_settings().data_dir) / "desktop" / name
+    return path if path.is_file() else None
+
+
+def _sha256(path: Path) -> str:
+    st = path.stat()
+    key = (str(path), st.st_size, st.st_mtime_ns)  # se recalcula solo si el archivo cambia
+    if key not in _sha_cache:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        _sha_cache.clear()
+        _sha_cache[key] = h.hexdigest()
+    return _sha_cache[key]
+
+
 @router.get("/api/desktop/latest", response_model=DesktopLatestOut)
 async def latest() -> DesktopLatestOut:
     """Última versión del instalador. La app compara versiones y verifica el SHA-256 antes de ejecutarlo."""
     s = get_settings()
-    if not (s.desktop_version and s.desktop_url and s.desktop_sha256):
+    path = _installer()
+    version = s.desktop_version or (m.group(1) if path and (m := _VERSION_RE.search(path.name)) else "")
+    url = s.desktop_url or (f"{s.public_url}/api/desktop/download" if path else "")
+    sha = s.desktop_sha256 or (await asyncio.to_thread(_sha256, path) if path else "")
+    if not (version and url and sha):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Todavía no hay una versión publicada")
-    return DesktopLatestOut(version=s.desktop_version, url=s.desktop_url, sha256=s.desktop_sha256.lower(),
-                            notas=s.desktop_notes)
+    return DesktopLatestOut(version=version, url=url, sha256=sha.lower(), notas=s.desktop_notes)
+
+
+@router.get("/api/desktop/download")
+async def download(request: Request) -> FileResponse:
+    """Descarga directa del instalador (el botón de /herramientas y las actualizaciones de la app)."""
+    path = _installer()
+    if not path:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Todavía no hay una versión publicada")
+    await ratelimit.hit(f"desktop-download:ip:{ratelimit.client_ip(request)}", 30, 3600)
+    return FileResponse(path, media_type="application/vnd.microsoft.portable-executable", filename=path.name,
+                        headers={"Cache-Control": "public, max-age=3600"})

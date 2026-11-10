@@ -179,3 +179,28 @@ async def test_latest_version(client, monkeypatch):
     assert r.status_code == 200
     assert r.json() == {"version": "0.2.0", "url": "https://fadexlabs.com/descargas/FADEX-Upgrader-0.2.0.exe",
                         "sha256": "ab" * 32, "notas": ""}
+
+
+async def test_installer_served_from_data_dir(client, monkeypatch):
+    from pathlib import Path
+
+    from app.core.config import get_settings
+    s = get_settings()
+    folder = Path(s.data_dir) / "desktop"
+    folder.mkdir(parents=True, exist_ok=True)
+    exe = folder / "FADEX-Upgrader-0.3.1-setup.exe"
+    exe.write_bytes(b"MZ instalador de prueba")
+    assert (await client.get("/api/desktop/download")).status_code == 404  # sin publicar
+    monkeypatch.setattr(s, "desktop_file", exe.name)
+
+    r = await client.get("/api/desktop/latest")
+    assert r.status_code == 200
+    assert r.json() == {"version": "0.3.1", "url": "http://test/api/desktop/download",
+                        "sha256": hashlib.sha256(b"MZ instalador de prueba").hexdigest(), "notas": ""}
+    r = await client.get("/api/desktop/download")
+    assert r.status_code == 200 and r.content == b"MZ instalador de prueba"
+    assert 'filename="FADEX-Upgrader-0.3.1-setup.exe"' in r.headers["content-disposition"]
+
+    # solo archivos .exe dentro de <data_dir>/desktop
+    monkeypatch.setattr(s, "desktop_file", "../../app/main.py")
+    assert (await client.get("/api/desktop/download")).status_code == 404
