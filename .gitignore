@@ -1,0 +1,36 @@
+# Secretos y entornos locales
+.env
+.env.*
+!.env.example
+*.pem
+secrets/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+
+# Varios
+.DS_Store
+Thumbs.db
+*.log
+test.db
+dev.db
+
+# Herramientas: subidas, trabajos y descargas (FADEX_DATA_DIR) y configuración real de slskd/rclone
+data/
+test-data/
+.test-run/
+deploy/slskd/*
+!deploy/slskd/slskd.example.yml
+deploy/rclone/
+rclone.conf

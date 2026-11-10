@@ -1,0 +1,17 @@
+# Contexto de build del worker (raíz del monorepo): solo hace falta apps/api/app, apps/worker y services
+.git
+**/.venv
+**/node_modules
+**/.next
+**/__pycache__
+**/.pytest_cache
+**/.test-run
+**/tests
+**/*.db
+**/*.log
+**/.env*
+apps/web
+data
+references
+docs
+deploy

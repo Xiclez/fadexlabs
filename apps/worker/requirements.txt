@@ -1,0 +1,6 @@
+# Lo de la API (modelos, base de datos, configuración, emails) más lo que usan los scripts de services/
+-r ../api/requirements.txt
+requests==2.32.*
+mutagen==1.47.*
+numpy==2.*
+shazamio==0.9.*

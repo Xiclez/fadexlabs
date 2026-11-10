@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base.yaml
+# Fija las versiones de imagen al desplegar:
+#   kustomize edit set image ghcr.io/fadexlabs/api=ghcr.io/fadexlabs/api:<tag>
+images:
+  - name: ghcr.io/fadexlabs/api
+    newTag: latest
+  - name: ghcr.io/fadexlabs/web
+    newTag: latest
+  - name: ghcr.io/fadexlabs/worker
+    newTag: latest

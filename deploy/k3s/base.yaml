@@ -1,0 +1,276 @@
+# FADEX Labs en k3s: namespace, Postgres, Redis, API, Web, worker de herramientas y slskd.
+# Aplicar con:  kubectl apply -k deploy/k3s
+# Antes, crea el Secret (ver secrets.example.yaml) y publica las imágenes en tu registry.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fadexlabs
+---
+# ---------- Postgres ----------
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: postgres, namespace: fadexlabs}
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector: {matchLabels: {app: postgres}}
+  template:
+    metadata: {labels: {app: postgres}}
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          envFrom: [{secretRef: {name: fadex-postgres}}]
+          env: [{name: PGDATA, value: /var/lib/postgresql/data/pgdata}]
+          ports: [{containerPort: 5432}]
+          readinessProbe: {exec: {command: ["pg_isready", "-U", "fadex"]}, periodSeconds: 10}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 1Gi}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}]
+  volumeClaimTemplates:
+    - metadata: {name: data}
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path   # provisioner por defecto de k3s
+        resources: {requests: {storage: 10Gi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: postgres, namespace: fadexlabs}
+spec:
+  selector: {app: postgres}
+  ports: [{port: 5432}]
+---
+# ---------- Redis (rate limiting; sin persistencia) ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: redis, namespace: fadexlabs}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: redis}}
+  template:
+    metadata: {labels: {app: redis}}
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+          ports: [{containerPort: 6379}]
+          resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {memory: 192Mi}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: redis, namespace: fadexlabs}
+spec:
+  selector: {app: redis}
+  ports: [{port: 6379}]
+---
+# ---------- API (FastAPI) ----------
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: fadex-api-config, namespace: fadexlabs}
+data:
+  FADEX_ENV: prod
+  FADEX_PUBLIC_URL: https://fadexlabs.com
+  FADEX_CORS_ORIGINS: '["https://fadexlabs.com","https://www.fadexlabs.com"]'
+  FADEX_REDIS_URL: redis://redis:6379/0
+  FADEX_JWT_ISSUER: https://fadexlabs.com
+  FADEX_SMTP_PORT: "2525"
+  # Herramientas: volumen compartido entre API y worker
+  FADEX_DATA_DIR: /data
+  FADEX_SLSKD_URL: http://slskd:5030
+  FADEX_SLSKD_DOWNLOADS_DIR: /data/slskd/downloads
+  FADEX_RCLONE_REMOTE: "gdrive:FADEX/Entregas"   # remoto:carpeta de tu rclone.conf (Secret fadex-worker)
+---
+# ---------- Datos de las herramientas: subidas, trabajos, resultados y descargas de slskd ----------
+# RWO con local-path: API, worker y slskd deben correr en el mismo nodo (k3s de un solo nodo: sí).
+# Dimensiónalo para el peor caso de un trabajo: zip (10 GB) + librería extraída + descargas + entrega.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata: {name: fadex-data, namespace: fadexlabs}
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources: {requests: {storage: 200Gi}}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: api, namespace: fadexlabs}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: api}}
+  template:
+    metadata: {labels: {app: api}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      initContainers:
+        - name: migrate   # alembic upgrade antes de arrancar (es idempotente)
+          image: ghcr.io/fadexlabs/api:latest
+          command: ["alembic", "upgrade", "head"]
+          envFrom: [{configMapRef: {name: fadex-api-config}}, {secretRef: {name: fadex-api}}]
+          securityContext: &hardened {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      containers:
+        - name: api
+          image: ghcr.io/fadexlabs/api:latest
+          envFrom: [{configMapRef: {name: fadex-api-config}}, {secretRef: {name: fadex-api}}]
+          ports: [{containerPort: 8000}]
+          readinessProbe: {httpGet: {path: /api/health, port: 8000}, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /api/health, port: 8000}, periodSeconds: 30, failureThreshold: 3}
+          resources: {requests: {cpu: 100m, memory: 192Mi}, limits: {memory: 512Mi}}
+          securityContext: *hardened
+          volumeMounts: [{name: tmp, mountPath: /tmp}, {name: data, mountPath: /data}]
+      volumes: [{name: tmp, emptyDir: {}}, {name: data, persistentVolumeClaim: {claimName: fadex-data}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: api, namespace: fadexlabs}
+spec:
+  selector: {app: api}
+  ports: [{port: 8000}]
+---
+# ---------- Worker de las herramientas (Tracklist ID y DJ Library Upgrader) ----------
+# Una sola réplica: procesa una tracklist y una librería a la vez (límites de ACRCloud/Shazam y una
+# sola cuenta de Soulseek). Recreate: al actualizar, el trabajo en curso vuelve a la cola y se retoma.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: worker, namespace: fadexlabs}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: worker}}
+  template:
+    metadata: {labels: {app: worker}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: worker
+          image: ghcr.io/fadexlabs/worker:latest
+          # rclone renueva el token de Drive dentro de su config: se copia del Secret a un lugar escribible
+          command: ["sh", "-c", "cp /secrets/rclone.conf /tmp/rclone.conf 2>/dev/null; exec python -m worker.main"]
+          envFrom:
+            - {configMapRef: {name: fadex-api-config}}
+            - {secretRef: {name: fadex-api}}
+            - {secretRef: {name: fadex-worker}}      # ACRCLOUD_TOKEN, FADEX_SLSKD_API_KEY
+          env: [{name: RCLONE_CONFIG, value: /tmp/rclone.conf}]
+          resources: {requests: {cpu: 250m, memory: 512Mi}, limits: {cpu: "2", memory: 2Gi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: data, mountPath: /data}
+            - {name: rclone, mountPath: /secrets, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - {name: data, persistentVolumeClaim: {claimName: fadex-data}}
+        - {name: rclone, secret: {secretName: fadex-worker, items: [{key: rclone.conf, path: rclone.conf}], optional: true}}
+---
+# ---------- slskd: Soulseek para el DJ Library Upgrader ----------
+# Solo lo usa el worker (API interna, sin Ingress). Su configuración vive en el Secret fadex-slskd.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: slskd, namespace: fadexlabs}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector: {matchLabels: {app: slskd}}
+  template:
+    metadata: {labels: {app: slskd}}
+    spec:
+      # mismo uid que el worker: el worker borra las descargas al terminar cada trabajo
+      securityContext: {runAsNonRoot: true, runAsUser: 10001, runAsGroup: 10001, fsGroup: 10001, seccompProfile: {type: RuntimeDefault}}
+      initContainers:
+        # Las carpetas de un subPath que no existen las crea kubelet como root y slskd no podría escribir:
+        # se crean antes, con el uid del pod.
+        - name: carpetas
+          image: busybox:1.36
+          command: ["sh", "-c", "mkdir -p /data/slskd/app /data/slskd/downloads /data/slskd/incomplete"]
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: data, mountPath: /data}]
+      containers:
+        - name: slskd
+          image: slskd/slskd:latest
+          env: [{name: SLSKD_REMOTE_CONFIGURATION, value: "false"}]
+          ports:
+            - {containerPort: 5030}
+            # Escucha de Soulseek. Abrirlo en el router es opcional, pero mejora la conexión con más usuarios.
+            - {containerPort: 50300, hostPort: 50300, protocol: TCP}
+          resources: {requests: {cpu: 100m, memory: 256Mi}, limits: {memory: 1Gi}}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts:
+            - {name: data, mountPath: /app, subPath: slskd/app}
+            - {name: data, mountPath: /downloads, subPath: slskd/downloads}
+            - {name: data, mountPath: /incomplete, subPath: slskd/incomplete}
+            - {name: config, mountPath: /app/slskd.yml, subPath: slskd.yml, readOnly: true}
+      volumes:
+        - {name: data, persistentVolumeClaim: {claimName: fadex-data}}
+        - {name: config, secret: {secretName: fadex-slskd}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: slskd, namespace: fadexlabs}
+spec:
+  selector: {app: slskd}
+  ports: [{port: 5030}]
+---
+# ---------- Web (Next.js) ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: fadexlabs}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: web}}
+  template:
+    metadata: {labels: {app: web}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 1000, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: web
+          image: ghcr.io/fadexlabs/web:latest
+          ports: [{containerPort: 3000}]
+          readinessProbe: {httpGet: {path: /, port: 3000}, periodSeconds: 10}
+          resources: {requests: {cpu: 100m, memory: 192Mi}, limits: {memory: 512Mi}}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+---
+apiVersion: v1
+kind: Service
+metadata: {name: web, namespace: fadexlabs}
+spec:
+  selector: {app: web}
+  ports: [{port: 3000}]
+---
+# ---------- Ingress (Traefik viene con k3s) ----------
+# /api -> FastAPI, todo lo demás -> Next.js. Mismo origen: cookies first-party, sin CORS.
+# Subidas de las herramientas: van por partes de 8 MB (FADEX_UPLOAD_CHUNK_BYTES), muy por debajo del
+# límite de 100 MB de Cloudflare. Traefik no limita el tamaño del cuerpo salvo que se le añada un
+# middleware "buffering"; no añadas uno a esta ruta.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: fadexlabs, namespace: fadexlabs}
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: fadexlabs.com
+      http:
+        paths:
+          - {path: /api, pathType: Prefix, backend: {service: {name: api, port: {number: 8000}}}}
+          - {path: /, pathType: Prefix, backend: {service: {name: web, port: {number: 3000}}}}
+---
+# ---------- Cloudflare Tunnel: expone el Ingress sin abrir puertos en el router ----------
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: cloudflared, namespace: fadexlabs}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: cloudflared}}
+  template:
+    metadata: {labels: {app: cloudflared}}
+    spec:
+      securityContext: {runAsNonRoot: true, runAsUser: 65532}
+      containers:
+        - name: cloudflared
+          image: cloudflare/cloudflared:latest
+          # En el panel de Cloudflare, apunta el hostname al servicio:
+          #   http://traefik.kube-system.svc.cluster.local:80
+          args: ["tunnel", "--no-autoupdate", "run", "--token", "$(TUNNEL_TOKEN)"]
+          envFrom: [{secretRef: {name: fadex-cloudflared}}]
+          resources: {requests: {cpu: 20m, memory: 32Mi}, limits: {memory: 128Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}

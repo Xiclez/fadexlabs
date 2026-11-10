@@ -1,0 +1,81 @@
+# Entorno de desarrollo local: Postgres + Redis + API + worker de las herramientas.
+# La web se corre aparte con `npm run dev` en apps/web (hot reload).
+#   docker compose -f docker-compose.dev.yml up -d
+# Con el slskd del DJ Library Upgrader (antes crea deploy/slskd/slskd.yml desde slskd.example.yml):
+#   docker compose -f docker-compose.dev.yml --profile upgrader up -d
+name: fadexlabs-dev
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: fadex
+      POSTGRES_PASSWORD: fadex
+      POSTGRES_DB: fadex
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fadex"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+  migrate:
+    build: ./apps/api
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-env
+      FADEX_ENV: dev
+      FADEX_DATABASE_URL: postgresql+asyncpg://fadex:fadex@postgres:5432/fadex
+      FADEX_REDIS_URL: redis://redis:6379/0
+      FADEX_PUBLIC_URL: http://localhost:3000
+      FADEX_CORS_ORIGINS: '["http://localhost:3000"]'
+      FADEX_COOKIE_SECURE: "false"
+      FADEX_DATA_DIR: /data
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  api:
+    build: ./apps/api
+    environment: *api-env
+    ports: ["8000:8000"]
+    volumes: [./data:/data]   # subidas y resultados, compartidos con el worker
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_started}
+
+  # Procesa los trabajos en cola: Tracklist ID y DJ Library Upgrader.
+  worker:
+    build: {context: ., dockerfile: apps/worker/Dockerfile}
+    environment:
+      <<: *api-env
+      ACRCLOUD_TOKEN: ${ACRCLOUD_TOKEN:-}               # sin token, Tracklist ID usa solo Shazam
+      FADEX_SLSKD_URL: http://slskd:5030
+      FADEX_SLSKD_API_KEY: ${FADEX_SLSKD_API_KEY:-}
+      FADEX_SLSKD_DOWNLOADS_DIR: /data/slskd/downloads
+      FADEX_RCLONE_REMOTE: ${FADEX_RCLONE_REMOTE:-}     # p. ej. gdrive:FADEX/Entregas; vacío = entrega manual
+      RCLONE_CONFIG: /rclone/rclone.conf
+    volumes:
+      - ./data:/data
+      - ./deploy/rclone:/rclone   # pon aquí tu rclone.conf (rclone renueva ahí el token de Drive)
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  # Soulseek para el DJ Library Upgrader. Solo con --profile upgrader.
+  slskd:
+    image: slskd/slskd:latest
+    profiles: ["upgrader"]
+    environment:
+      - SLSKD_REMOTE_CONFIGURATION=false
+    ports:
+      - "5030:5030"          # interfaz web (admin)
+      - "50300:50300/tcp"    # escucha de Soulseek (opcional abrirlo en el router)
+    volumes:
+      - ./deploy/slskd:/app                      # slskd.yml + su base interna
+      - ./data/slskd/downloads:/downloads        # el worker las lee en /data/slskd/downloads
+      - ./data/slskd/incomplete:/incomplete
+
+volumes:
+  pgdata:

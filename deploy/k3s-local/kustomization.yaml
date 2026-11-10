@@ -1,0 +1,55 @@
+# FADEX Labs en un k3s LOCAL (k3d) para pruebas. Mismos manifiestos que producción, con estos cambios:
+# imágenes construidas en tu máquina, sin dominio ni Cloudflare, http://localhost:8080 y una réplica.
+#
+#   k3d cluster create fadex -p "8080:80@loadbalancer"
+#   docker build -t fadex/api:dev apps/api
+#   docker build -t fadex/web:dev apps/web
+#   docker build -t fadex/worker:dev -f apps/worker/Dockerfile .
+#   k3d image import fadex/api:dev fadex/web:dev fadex/worker:dev -c fadex
+#   kubectl apply -k deploy/k3s-local
+#
+# Pasos completos (token de ACRCloud y slskd) en el README.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../k3s
+  - secrets.yaml
+
+# Etiqueta distinta de "latest": así Kubernetes usa la imagen importada y no intenta bajarla de ghcr.
+images:
+  - {name: ghcr.io/fadexlabs/api, newName: fadex/api, newTag: dev}
+  - {name: ghcr.io/fadexlabs/web, newName: fadex/web, newTag: dev}
+  - {name: ghcr.io/fadexlabs/worker, newName: fadex/worker, newTag: dev}
+
+patches:
+  # Sin HTTPS ni dominio: el sitio vive en http://localhost:8080
+  - target: {kind: ConfigMap, name: fadex-api-config}
+    patch: |-
+      apiVersion: v1
+      kind: ConfigMap
+      metadata: {name: fadex-api-config}
+      data:
+        FADEX_ENV: dev                       # claves JWT efímeras y emails en el log de la API / del worker
+        FADEX_PUBLIC_URL: http://localhost:8080
+        FADEX_CORS_ORIGINS: '["http://localhost:8080"]'
+        FADEX_JWT_ISSUER: http://localhost:8080
+        FADEX_COOKIE_SECURE: "false"
+        FADEX_RCLONE_REMOTE: ""              # sin Drive: la entrega queda en /data/jobs/<id>/entrega
+  # El Ingress responde a cualquier host (localhost)
+  - target: {kind: Ingress, name: fadexlabs}
+    patch: |-
+      - {op: remove, path: /spec/rules/0/host}
+  # Una réplica: con FADEX_ENV=dev cada API genera su propia clave JWT
+  - target: {kind: Deployment, name: api}
+    patch: |-
+      - {op: replace, path: /spec/replicas, value: 1}
+  - target: {kind: Deployment, name: web}
+    patch: |-
+      - {op: replace, path: /spec/replicas, value: 1}
+  # Sin Cloudflare Tunnel
+  - target: {kind: Deployment, name: cloudflared}
+    patch: |-
+      $patch: delete
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: cloudflared}

@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/* ===== FADEX Labs: tokens de marca (sacados del dossier y los catálogos) ===== */
+@theme {
+  --color-ink: #07080d;          /* fondo */
+  --color-panel: #0f1018;        /* superficies */
+  --color-panel-2: #141522;
+  --color-logo: #0d0b18;         /* fondo del logo raster */
+  --color-line: #23243a;         /* bordes sutiles */
+  --color-text: #eceaf6;
+  --color-muted: #9a99b3;
+  --color-dim: #6b6a85;
+
+  --color-magenta: #e040c8;
+  --color-violet: #8b5cf6;
+  --color-cyan: #22d3ee;
+  --color-lime: #c6f432;
+
+  --font-display: var(--font-unbounded);
+  --font-sans: var(--font-manrope);
+  --font-mono: var(--font-jetbrains);
+}
+
+:root {
+  --fx-gradient: linear-gradient(90deg, var(--color-magenta), var(--color-violet) 50%, var(--color-cyan));
+  color-scheme: dark;
+}
+
+html {
+  background: var(--color-ink);
+}
+
+body {
+  background-color: var(--color-ink);
+  /* retícula fina del dossier */
+  background-image:
+    linear-gradient(rgb(255 255 255 / 0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(255 255 255 / 0.025) 1px, transparent 1px);
+  background-size: 28px 28px;
+  color: var(--color-text);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+::selection {
+  background: rgb(139 92 246 / 0.45);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-cyan);
+  outline-offset: 3px;
+}
+
+@layer components {
+  /* Barra de degradado superior (dossier) */
+  .fx-topbar {
+    height: 4px;
+    background: var(--fx-gradient);
+  }
+
+  /* Texto con degradado de marca */
+  .fx-gradient-text {
+    background: var(--fx-gradient);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* Texto solo contorno, como "DIGITAL" / "MANAGEMENT" en los catálogos */
+  .fx-outline-text {
+    color: transparent;
+    -webkit-text-stroke: 1.5px var(--color-violet);
+    text-shadow: 0 0 24px rgb(139 92 246 / 0.35);
+  }
+
+  /* Etiqueta mono espaciada: "ESTRATEGIA / CONTENIDO / ADS" */
+  .fx-label {
+    font-family: var(--font-mono), monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.28em;
+    text-transform: uppercase;
+  }
+
+  /* Tarjeta con esquinas cortadas (octágono) y borde en degradado.
+     Uso: <div class="fx-cut"><div class="fx-cut-inner">…</div></div> */
+  .fx-cut {
+    --cut: 14px;
+    padding: 1px;
+    background: linear-gradient(135deg, rgb(224 64 200 / 0.75), rgb(139 92 246 / 0.6) 45%, rgb(34 211 238 / 0.75));
+    clip-path: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)),
+      calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut));
+  }
+  .fx-cut-inner {
+    height: 100%;
+    background: linear-gradient(180deg, rgb(20 21 34 / 0.96), rgb(13 13 22 / 0.98));
+    clip-path: polygon(var(--cut) 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% calc(100% - var(--cut)),
+      calc(100% - var(--cut)) 100%, var(--cut) 100%, 0 calc(100% - var(--cut)), 0 var(--cut));
+  }
+
+  /* Tarjeta del dossier: panel con barra de color a la izquierda */
+  .fx-panel {
+    background: rgb(20 21 34 / 0.85);
+    border: 1px solid var(--color-line);
+    border-left-width: 3px;
+  }
+
+}
+
+/* Resplandor neón para precios y CTAs (utilidad: admite hover:/group-hover:) */
+@utility fx-glow {
+  box-shadow: 0 0 0 1px rgb(139 92 246 / 0.6), 0 0 28px rgb(139 92 246 / 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

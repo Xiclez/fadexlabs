@@ -1,0 +1,35 @@
+# slskd de la plataforma (DJ Library Upgrader). Copia a deploy/slskd/slskd.yml (está en .gitignore)
+# y cambia los valores CAMBIAR. En k3s este archivo va en el Secret fadex-slskd.
+#
+# Usa una cuenta de Soulseek SOLO para esto: si dos clientes entran con la misma cuenta, la red los
+# desconecta mutuamente. No hace falta registrarla: se crea la primera vez que se conecta.
+remote_configuration: false
+
+directories:
+  downloads: /downloads
+  incomplete: /incomplete
+
+# Sin bloque "shares" esta instancia no comparte nada. Algunos usuarios de Soulseek bloquean a quien no
+# comparte, lo que baja la tasa de éxito; el proyecto original compartía /downloads. Aquí queda apagado
+# porque lo descargado es de los usuarios de la plataforma y se borra al terminar cada trabajo.
+# shares:
+#   directories:
+#     - /downloads
+
+soulseek:
+  username: CAMBIAR
+  password: CAMBIAR
+  listen_port: 50300
+  description: FADEX Labs
+
+web:
+  port: 5030
+  authentication:
+    disabled: false
+    username: admin
+    password: CAMBIAR
+    api_keys:
+      fadex-worker:
+        key: CAMBIAR            # el mismo valor que FADEX_SLSKD_API_KEY (openssl rand -hex 24)
+        role: readwrite
+        cidr: 0.0.0.0/0,::/0
