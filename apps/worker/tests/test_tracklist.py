@@ -1,6 +1,10 @@
 """Tracklist ID de punta a punta: subida por la API → worker (ACRCloud y Shazam simulados) → descarga."""
 import csv
 import io
+import json
+import os
+import subprocess
+import sys
 import uuid
 
 import pytest
@@ -11,8 +15,9 @@ from app.db import SessionLocal
 from app.models import ToolJob
 from app.services import email
 from app.services import tools as svc
-from tests.conftest import bearer, ffmpeg, signup, upload
-from worker import jobs, main
+from tests.conftest import FAKES, bearer, ffmpeg, signup, upload
+from worker import jobs, main, proc
+from worker.tracklist import confidence, level
 
 
 @pytest.fixture(scope="session")
@@ -60,6 +65,10 @@ async def test_tracklist_end_to_end(client, set_wav):
         (await client.get(f"/api/tools/jobs/{job.id}/files/tracklist.csv", headers=h)).content.decode("utf-8-sig"))))
     assert [r["source"] for r in rows] == ["acrcloud+shazam", "acrcloud", "shazam", "", "acrcloud"]
     assert rows[3]["note"].startswith("aparece en: Otro DJ")
+    # cada coincidencia va puntuada; los tramos ID - ID no
+    assert [(r["confianza"], r["nivel"]) for r in rows] == [
+        ("100", "alta"), ("85", "alta"), ("95", "alta"), ("", ""), ("100", "alta")]
+    assert detail["summary"]["confidence"] == {"alta": 4, "media": 0, "baja": 0}
 
     # limpieza: el audio subido y la carpeta de trabajo ya no existen; los resultados sí
     root = svc.job_dir(job.id)
@@ -82,22 +91,64 @@ async def test_acrcloud_down_falls_back_to_shazam(client, set_wav, monkeypatch):
     assert job.status == "done", job.error
     summary = job.result["summary"]
     assert summary["sources"] == ["shazam"]
-    assert summary["notes"] == ["ACRCloud no estuvo disponible: se usó solo Shazam."]
+    assert summary["notes"] == ["ACRCloud no estuvo disponible: el tracklist se armó con Shazam."]
     txt = (svc.results_dir(job.id) / "tracklist.txt").read_text(encoding="utf-8")
     assert "Artista Uno - PRIMER TEMA" in txt and "Segundo Tema" not in txt  # solo lo que oyó Shazam
 
 
 async def test_shazam_time_cap(client, set_wav, monkeypatch):
-    """Shazam es relleno opcional: si se pasa de su tope se corta y se usa lo escaneado hasta ahí."""
+    """Con ACRCloud como base, Shazam tiene un tope corto: se corta y se usa lo escaneado hasta ahí."""
     monkeypatch.setenv("FAKE_SHAZAM_SLOW", "1")
     monkeypatch.setattr(get_settings(), "shazam_max_seconds", 3)
     access = await signup(client)
     await upload(client, access, set_wav, "tracklist")
     job = await run_next()
     assert job.status == "done", job.error
-    assert job.result["summary"]["notes"] == ["Shazam se cortó por tiempo: los huecos se completaron solo en parte."]
+    assert job.result["summary"]["notes"] == ["Shazam se cortó por tiempo (alcanzó a revisar 56% del set)."]
     txt = (svc.results_dir(job.id) / "tracklist.txt").read_text(encoding="utf-8")
     assert "Artista Dos, Invitada - Segundo Tema" in txt  # la base de ACRCloud está completa
+
+
+async def test_shazam_saturated_does_not_stop_the_job(client, set_wav, monkeypatch):
+    """Si Shazam rechaza peticiones se detiene solo ese motor; el trabajo termina con ACRCloud."""
+    monkeypatch.setenv("FAKE_SHAZAM_SATURATED", "1")
+    access = await signup(client)
+    await upload(client, access, set_wav, "tracklist")
+    job = await run_next()
+    assert job.status == "done", job.error
+    summary = job.result["summary"]
+    assert summary["sources"] == ["acrcloud", "shazam"] and summary["tracks"] == 3
+    assert summary["notes"] == ["Shazam rechazó peticiones por saturación y se detuvo (alcanzó a revisar 22% del set)."]
+
+    # y si además ACRCloud no está, se entrega lo poco que Shazam alcanzó a reconocer
+    monkeypatch.setenv("FAKE_ACR_FAIL", "1")
+    await upload(client, access, set_wav, "tracklist")
+    job = await run_next()
+    assert job.status == "done", job.error
+    assert job.result["summary"]["sources"] == ["shazam"] and len(job.result["summary"]["notes"]) == 2
+    assert "Artista Uno - PRIMER TEMA" in (svc.results_dir(job.id) / "tracklist.txt").read_text(encoding="utf-8")
+
+
+def test_scan_stops_fast_when_shazam_rejects(set_wav, tmp_path):
+    """El scan.py real: tras 4 fragmentos rechazados seguidos termina con código 3, sin esperas largas."""
+    out = tmp_path / "raw.jsonl"
+    stub = FAKES / "shazamio_stub"
+    r = subprocess.run([sys.executable, str(proc.services_dir() / "tracklist" / "scan.py"), str(set_wav), str(out),
+                        "--pause", "0", "--backoff", "0", "--max-fail-streak", "4"],
+                       env={**os.environ, "PYTHONPATH": str(stub), "STUB_SHAZAM_OK": "3"},
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 3, r.stdout + r.stderr
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert [bool(x["response"].get("track")) for x in rows] == [True] * 3 + [False] * 4  # 18 fragmentos: paró en el 7
+    assert "se da por saturado" in r.stdout
+
+
+def test_confidence_scale():
+    assert confidence("", "") is None                                   # ID - ID
+    assert (confidence("acrcloud", "60"), confidence("acrcloud", "100")) == (60, 100)
+    assert confidence("acrcloud+shazam", "90") == 100                   # dos motores de acuerdo: +15
+    assert [confidence("shazam", str(h)) for h in (2, 3, 4, 9)] == [70, 85, 95, 95]
+    assert [level(c) for c in (100, 85, 84, 60, 59)] == ["alta", "alta", "media", "media", "baja"]
 
 
 async def test_no_engine_available_fails_with_clear_message(client, set_wav, monkeypatch):

@@ -41,7 +41,7 @@ export function TracklistTool() {
             fileHint="WAV, MP3, FLAC, AIFF o M4A; sets de 2 horas o más." />
           <Steps items={[
             "Subes el set. Va por partes: si se corta el internet, continúa donde se quedó.",
-            "Lo reconocemos con varios motores y marcamos como ID - ID lo que no se pudo identificar.",
+            "Lo reconocemos con varios motores a la vez; si uno se satura, el trabajo sigue con los demás. Cada coincidencia lleva su puntuación de confianza y lo no identificado queda como ID - ID.",
             "Te avisamos por email. Un set de 2 horas tarda entre 10 y 40 minutos.",
             "Descargas el tracklist en TXT y CSV. Tu audio se borra al terminar.",
           ]} />
@@ -89,7 +89,7 @@ export function LibraryUpgraderTool() {
             "Buscamos cada pista y comparamos el audio con tu original: remixes, versiones en vivo u otra canción con el mismo nombre se descartan.",
             "Detectamos los falsos lossless (FLAC o WAV hechos desde un MP3) y nunca convertimos MP3 a un formato sin pérdida.",
             "Recibes un enlace de Google Drive con tu librería: mismos nombres y carpetas, tags y carátula para Rekordbox, más un informe por pista.",
-            "Una librería grande tarda varias horas. Te avisamos por email al terminar.",
+            "Si ninguna fuente de una pista está disponible en 10 minutos, queda pendiente en el informe para reintentarla después o con otro formato. Te avisamos por email al terminar.",
           ]} />
         </div>
       </Container>

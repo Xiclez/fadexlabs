@@ -16,6 +16,7 @@ class FakeSlskd:
         self.searches: dict[str, str] = {}
         self.transfers: list[dict] = []
         self.cancelled: list[str] = []
+        self.seq = 0
         self.api_key = "clave-de-prueba"
         fake = self
 
@@ -85,15 +86,18 @@ class FakeSlskd:
                 if not c["stuck"]:
                     dest.parent.mkdir(parents=True, exist_ok=True)
                     shutil.copyfile(c["source"], dest)
-                self.transfers.append({"username": user, "filename": req["filename"], "id": f"t{len(self.transfers)}",
+                self.seq += 1
+                self.transfers.append({"username": user, "filename": req["filename"], "id": f"t{self.seq}",
                                        "state": "Queued, Remotely" if c["stuck"] else "Completed, Succeeded"})
             return ({},)
         if m and method == "DELETE":
             self.cancelled.append(m.group(2))
+            self.transfers = [t for t in self.transfers if t["id"] != m.group(2)]
             return ({},)
         if path == "/transfers/downloads":
             users = {}
             for t in self.transfers:
-                users.setdefault(t["username"], []).append({k: t[k] for k in ("filename", "id", "state")})
+                users.setdefault(t["username"], []).append(
+                    {**{k: t[k] for k in ("filename", "id", "state")}, "bytesTransferred": 0})
             return ([{"username": u, "directories": [{"files": fs}]} for u, fs in users.items()],)
         return ({"error": f"{method} {path} no simulado"}, 404)

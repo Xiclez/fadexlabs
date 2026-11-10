@@ -73,8 +73,9 @@ class Settings(BaseSettings):
     # Worker · Tracklist ID. El token de ACRCloud llega en ACRCLOUD_TOKEN (sin prefijo; solo al worker).
     tracklist_kbps: int = 96
     acr_max_seconds: int = 60 * 60
-    shazam_max_seconds: int = 15 * 60                # relleno opcional cuando ACRCloud ya respondió (0 = sin Shazam)
-    shazam_fallback_max_seconds: int = 2 * 60 * 60   # tope cuando Shazam es el único motor
+    shazam_max_seconds: int = 15 * 60                # tope de Shazam cuando ACRCloud respondió (0 = sin Shazam)
+    shazam_fallback_max_seconds: int = 60 * 60       # tope cuando Shazam es el único motor
+    shazam_fail_streak: int = 4                      # fragmentos seguidos rechazados para dar a Shazam por saturado
     # Comandos alternativos (pruebas y humo sin red): reciben "<set> <salida>" como argumentos.
     acr_scan_cmd: str = ""
     shazam_scan_cmd: str = ""
@@ -85,7 +86,12 @@ class Settings(BaseSettings):
     slskd_downloads_dir: str = ""                    # vacío = <data_dir>/slskd/downloads
     upgrade_max_hours: float = 12                    # tope por librería; se entrega lo conseguido
     upgrade_search_delay: float = 3                  # pausa entre búsquedas (no saturar la red)
-    upgrade_watch_seconds: int = 60                  # cada cuánto se revisan las descargas
+    upgrade_watch_seconds: int = 15                  # cada cuánto se revisan las descargas
+    # Tiempos por canción: si la descarga de un candidato no arranca se prueba otro; si en total pasa el
+    # tiempo de la canción sin una descarga avanzando, queda pendiente en el informe.
+    upgrade_song_timeout_seconds: int = 600
+    upgrade_candidate_wait_seconds: int = 120
+    upgrade_stall_seconds: int = 120
     rclone_bin: str = "rclone"
     rclone_remote: str = ""                          # p. ej. "gdrive:FADEX/Entregas"; vacío = entrega pendiente (manual)
 

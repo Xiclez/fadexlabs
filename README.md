@@ -89,11 +89,13 @@ El contenido se valida con `ffprobe` (sets) o `zipfile` (librerías), nunca por 
 
 **Worker.** Una tracklist y una librería a la vez. Ejecuta los scripts de `services/`:
 
-- *Tracklist ID:* comprimir → ACRCloud → Shazam (relleno con tope de tiempo; único motor si ACRCloud
-  falla) → tracklist.
+- *Tracklist ID:* comprimir → ACRCloud y Shazam **en paralelo** → tracklist. Si un motor se satura, falla
+  o se pasa de tiempo, el trabajo sigue con el otro. El CSV puntúa cada coincidencia (`confianza` 0-100
+  y `nivel` alta/media/baja).
 - *DJ Library Upgrader:* extracción segura del zip → búsqueda y descarga en Soulseek con el slskd de la
   plataforma → cada descarga se compara con el original (solo la misma grabación) y se descartan los
-  falsos lossless → conversión al formato pedido con tags y carátula → `rclone copy` + `rclone link` a
+  falsos lossless; si una fuente no responde en 2 min se prueba otra, y si en 10 min ninguna está
+  disponible la pista queda pendiente en el informe → conversión al formato pedido con tags y carátula → `rclone copy` + `rclone link` a
   Google Drive. Si Drive falla, el trabajo termina con la entrega pendiente en
   `data/jobs/<id>/entrega` para subirla a mano.
 
@@ -109,7 +111,9 @@ duran 30 días.
 | `FADEX_LIBRARY_MAX_FILES` / `FADEX_LIBRARY_MAX_UNPACKED_GB` | 3000 / 40 | pistas por librería y tamaño descomprimido |
 | `FADEX_UPLOAD_CHUNK_BYTES` | 8 MB | tamaño de cada parte |
 | `FADEX_RESULT_TTL_DAYS` / `FADEX_UPLOAD_TTL_SECONDS` | 30 / 24 h | resultados disponibles; subidas abandonadas |
-| `FADEX_SHAZAM_MAX_SECONDS` / `FADEX_SHAZAM_FALLBACK_MAX_SECONDS` | 15 min / 2 h | tope de Shazam como relleno / como único motor |
+| `FADEX_SHAZAM_MAX_SECONDS` / `FADEX_SHAZAM_FALLBACK_MAX_SECONDS` | 15 min / 1 h | tope de Shazam con ACRCloud / como único motor |
+| `FADEX_SHAZAM_FAIL_STREAK` | 4 | fragmentos rechazados seguidos para dar a Shazam por saturado |
+| `FADEX_UPGRADE_SONG_TIMEOUT_SECONDS` / `FADEX_UPGRADE_CANDIDATE_WAIT_SECONDS` | 10 min / 2 min | tiempo máximo por canción / espera por cada fuente |
 | `FADEX_UPGRADE_MAX_HOURS` | 12 | tope por librería; se entrega lo conseguido |
 
 Además, un solo trabajo activo por usuario y herramienta.

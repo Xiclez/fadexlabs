@@ -27,5 +27,8 @@ with open(out, "a", encoding="utf-8") as fh:
             resp["track"] = {"layout": "5", "type": "MUSIC", "key": "1", "title": found[0], "subtitle": found[1]}
         fh.write(json.dumps({"t": t, "window": 12, "response": resp}, ensure_ascii=False) + "\n")
         fh.flush()
-        if os.environ.get("FAKE_SHAZAM_SLOW") and i >= 9:   # como cuando Shazam empieza a limitar por IP
+        if os.environ.get("FAKE_SHAZAM_SLOW") and i >= 9:   # un escaneo que no termina a tiempo
             time.sleep(60)
+        if os.environ.get("FAKE_SHAZAM_SATURATED") and i >= 3:   # como scan.py cuando Shazam limita por IP
+            print("Shazam rechazó 4 fragmentos seguidos: se da por saturado y se detiene")
+            sys.exit(3)

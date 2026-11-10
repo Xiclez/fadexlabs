@@ -188,6 +188,7 @@ function Result({ job }: { job: Job }) {
   const s = (job.summary ?? {}) as Record<string, number | string | string[] | Record<string, number> | null>;
   const notes = Array.isArray(s.notes) ? s.notes : [];
   const n = (key: string) => (typeof s[key] === "number" ? (s[key] as number) : 0);
+  const conf = s.confidence && typeof s.confidence === "object" && !Array.isArray(s.confidence) ? s.confidence : null;
 
   async function download(name: string) {
     setError("");
@@ -205,6 +206,7 @@ function Result({ job }: { job: Job }) {
       ["Tramos ID - ID", String(n("unidentified"))],
       ...(n("duration_seconds") ? [["Duración del set", formatDuration(n("duration_seconds"))] as [string, string]] : []),
       ["Motores", (Array.isArray(s.sources) ? s.sources : []).map((x) => (x === "acrcloud" ? "ACRCloud" : "Shazam")).join(" + ")],
+      ...(conf ? [["Confianza de las coincidencias", `${conf.alta ?? 0} alta · ${conf.media ?? 0} media · ${conf.baja ?? 0} baja`] as [string, string]] : []),
     ]
     : [
       ["Pistas en tu librería", String(n("in_library"))],
@@ -213,6 +215,7 @@ function Result({ job }: { job: Job }) {
       ...(s.by_format && typeof s.by_format === "object" && !Array.isArray(s.by_format)
         ? [["Formatos", Object.entries(s.by_format).map(([k, v]) => `${v} ${k}`).join(", ")] as [string, string]] : []),
       ["No encontradas", String(n("not_found"))],
+      ...(n("pending_timeout") ? [["Pendientes (sin fuente disponible)", String(n("pending_timeout"))] as [string, string]] : []),
       ...(n("rejected_other_recording") ? [["Descartadas (otra grabación)", String(n("rejected_other_recording"))] as [string, string]] : []),
       ...(n("fake_lossless") ? [["Falsos lossless (marcados)", String(n("fake_lossless"))] as [string, string]] : []),
       ...(n("doubtful_match") ? [["Coincidencia dudosa (marcadas)", String(n("doubtful_match"))] as [string, string]] : []),
@@ -244,6 +247,22 @@ function Result({ job }: { job: Job }) {
         <p className="mt-6 rounded-md border border-cyan/40 bg-cyan/10 px-4 py-3 text-sm text-cyan" role="status">
           Tu librería ya está lista en nuestro servidor. Te enviaremos el enlace de descarga por WhatsApp.
         </p>
+      )}
+
+      {job.tool === "tracklist" && conf && (
+        <p className="mt-4 text-xs text-dim">
+          El CSV trae la puntuación de cada coincidencia (0-100): alta desde 85, media desde 60. Revisa las de confianza baja.
+        </p>
+      )}
+      {job.tool === "library_upgrade" && n("pending_timeout") > 0 && (
+        <div className="mt-6 rounded-md border border-violet/40 bg-violet/10 px-4 py-4 text-sm">
+          <p>
+            {n("pending_timeout") === 1 ? "1 pista quedó pendiente" : `${n("pending_timeout")} pistas quedaron pendientes`}:
+            ninguna fuente estuvo disponible a tiempo. Están en «No encontradas». Puedes volver a subir tu librería
+            más tarde o probar con otro formato; lo que ya mejoraste no se vuelve a buscar si reemplazas tus archivos.
+          </p>
+          <div className="mt-4"><ButtonLink href={TOOL.library_upgrade.href} variant="ghost">Intentar de nuevo</ButtonLink></div>
+        </div>
       )}
 
       {job.files.length > 0 && (

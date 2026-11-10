@@ -172,6 +172,8 @@ async def test_time_cap_delivers_what_was_downloaded(client, audio, slskd, monke
     slskd.offer("tercera rola", "u_ausente", "Music\\Grupo Tres\\Grupo Tres - Tercera Rola.flac", d / "falso_C.flac", 60,
                 stuck=True, sampleRate=44100, bitDepth=16, bitRate=900)
     monkeypatch.setattr(get_settings(), "upgrade_max_hours", 25 / 3600)
+    monkeypatch.setattr(get_settings(), "upgrade_song_timeout_seconds", 9999)    # aquí se prueba el tope global
+    monkeypatch.setattr(get_settings(), "upgrade_candidate_wait_seconds", 9999)
     access = await signup(client)
     await upload(client, access, zp, "library_upgrade", formato="aiff", accept_rights=True)
     job = await run_next()
@@ -179,8 +181,54 @@ async def test_time_cap_delivers_what_was_downloaded(client, audio, slskd, monke
     summary = job.result["summary"]
     assert summary["delivered"] == 1 and summary["unfinished"] == 1 and summary["delivery"] == "drive"
     assert "tiempo máximo" in summary["notes"][0]
-    stuck = next(t for t in slskd.transfers if t["username"] == "u_ausente")
-    assert slskd.cancelled == [stuck["id"]]  # lo que quedó encolado en slskd se cancela
+    assert len(slskd.cancelled) == 1  # lo que quedó encolado en slskd se cancela
+    assert not [t for t in slskd.transfers if t["username"] == "u_ausente"]
+
+
+FLAC = {"sampleRate": 44100, "bitDepth": 16, "bitRate": 900}
+
+
+async def test_unresponsive_source_is_replaced_by_another(client, audio, slskd, monkeypatch):
+    """Si la descarga del mejor candidato no arranca, no se espera a ese usuario: se cancela y se baja de otro."""
+    d, zp = audio
+    slskd.catalog = [c for c in slskd.catalog if c["username"] != "u_real"]
+    slskd.offer("tema bueno", "u_ausente", "Music\\Artista Uno\\Artista Uno - Tema Bueno.flac", d / "real_A.flac", 60,
+                stuck=True, **FLAC)
+    slskd.offer("tema bueno", "u_real", "Otra\\Artista Uno\\Artista Uno - Tema Bueno promo rip.flac", d / "real_A.flac",
+                60, **FLAC)   # peor puntaje (palabras de sobra): queda como segundo candidato
+    monkeypatch.setattr(get_settings(), "upgrade_candidate_wait_seconds", 3)
+    access = await signup(client)
+    await upload(client, access, zp, "library_upgrade", formato="aiff", accept_rights=True)
+    job = await run_next()
+    assert job.status == "done", (job.message, job.error)
+    summary = job.result["summary"]
+    assert summary["delivered"] == 2 and summary["pending_timeout"] == 0
+    informe = (svc.results_dir(job.id) / "informe.csv").read_text(encoding="utf-8-sig")
+    assert "House/Pista A.aiff" in informe and "u_real" in informe
+    assert len(slskd.cancelled) == 1                      # la descarga que no arrancaba se quitó de slskd
+    assert not [t for t in slskd.transfers if t["username"] == "u_ausente"]
+
+
+async def test_song_timeout_leaves_track_pending(client, audio, slskd, monkeypatch):
+    """Ninguna fuente disponible dentro del tiempo de la canción: queda pendiente en el informe, no bloquea."""
+    d, zp = audio
+    slskd.catalog = [c for c in slskd.catalog if c["username"] != "u_real"]
+    for user in ("u_ausente1", "u_ausente2", "u_ausente3"):
+        slskd.offer("tema bueno", user, f"Music\\{user}\\Artista Uno - Tema Bueno.flac", d / "real_A.flac", 60,
+                    stuck=True, **FLAC)
+    monkeypatch.setattr(get_settings(), "upgrade_candidate_wait_seconds", 2)
+    monkeypatch.setattr(get_settings(), "upgrade_song_timeout_seconds", 5)   # no alcanza a probar al tercero
+    access = await signup(client)
+    await upload(client, access, zp, "library_upgrade", formato="aiff", accept_rights=True)
+    job = await run_next()
+    assert job.status == "done", (job.message, job.error)
+    summary = job.result["summary"]
+    assert summary["delivered"] == 1 and summary["pending_timeout"] == 1 and summary["unfinished"] == 0
+    assert job.message == "1 de 3 pistas mejoradas, 1 pendiente"
+    missing = (svc.results_dir(job.id) / "no_encontradas.txt").read_text(encoding="utf-8")
+    line = next(x for x in missing.splitlines() if "Pista A.mp3" in x)
+    assert "pendiente: ninguna fuente disponible a tiempo" in line
+    assert not [t for t in slskd.transfers if t["username"].startswith("u_ausente")]  # nada queda encolado en slskd
 
 
 async def test_nothing_to_upgrade(client, audio, slskd, tmp_path):

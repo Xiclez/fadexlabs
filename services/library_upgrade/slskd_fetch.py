@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-# Vendorizado de dj-library-upgrader/upgrader/slskd_fetch.py (sin cambios).
+# Vendorizado de dj-library-upgrader/upgrader/slskd_fetch.py, con cambios para la plataforma (ver
+# services/README.md): tiempo límite por canción, salto a otro candidato cuando la descarga no arranca
+# y revisión de descargas durante la búsqueda.
 # No lo edites aquí: cambia el original y vuelve a copiarlo (ver services/README.md).
 """
 slskd_fetch.py — Busca en Soulseek (vía la API de slskd) las canciones de
@@ -141,6 +143,10 @@ class Slskd:
 
     def downloads(self):
         return self._req("GET", "/transfers/downloads") or []
+
+    def cancel(self, username, transfer_id):
+        """Cancela y quita una descarga de la cola de slskd (p. ej. un usuario que nunca la sirve)."""
+        self._req("DELETE", f"/transfers/downloads/{quote(username, safe='')}/{transfer_id}", params={"remove": "true"})
 
 
 # ───────────────────────── evaluación de resultados ─────────────────────────
@@ -387,10 +393,41 @@ def enqueue_next(cli, entry, dry):
         entry["tried"].append(c)
         entry["current"] = c
         entry["status"] = "queued" if not dry else "dry_run"
+        now = time.time()
+        entry.setdefault("started_at", now)  # el tiempo límite de la canción cuenta desde su primer intento
+        entry.update(cand_at=now, prog_bytes=0, prog_at=now)
         return True
     entry["current"] = None
     entry["status"] = "failed" if entry["tried"] else "not_found"
     return False
+
+
+def give_up_waiting(cli, e, transfer, why, quiet):
+    """La descarga actual no arranca (o se estancó): se cancela en slskd y se prueba otro candidato.
+    Si ya no hay candidatos o se agotó el tiempo de la canción, queda 'timeout' (pendiente en el informe)."""
+    c = e["current"]
+    if transfer and transfer.get("id"):
+        try:
+            cli.cancel(c["username"], transfer["id"])
+        except Exception:  # si no se pudo cancelar, igual se sigue con otro candidato
+            pass
+    e.setdefault("waited", []).append({"username": c["username"], "filename": c["filename"], "why": why})
+    out_of_time = time.time() - e.get("started_at", time.time()) >= SONG_TIMEOUT[0]
+    if not out_of_time and enqueue_next(cli, e, False):
+        if not quiet:
+            print(f"  … {label(e['track'])}: {why} → probando otro candidato")
+        return
+    keep = [r for r in e.get("rejected", []) if r.get("keepable")]
+    if keep:  # ya se había bajado algo aceptable con reservas (dudoso o falso lossless): mejor eso que nada
+        e["current"] = max(keep, key=lambda r: (r.get("match") or {}).get("similarity", 0))
+        e["status"] = "downloaded"
+        return
+    e["current"], e["status"] = None, "timeout"
+    if not quiet:
+        print(f"  ⏱ {label(e['track'])}: sin fuente disponible a tiempo → queda pendiente")
+
+
+SONG_TIMEOUT = [600.0]
 
 
 # ───────────────────────── comandos ─────────────────────────
@@ -409,7 +446,13 @@ def cmd_search(cli, state, opts):
         todo = todo[: opts.limit]
     print(f"Buscando {len(todo)} canciones…\n")
 
+    last_sync = time.time()
     for i, e in enumerate(todo, 1):
+        # Mientras se busca el resto, las descargas ya encoladas se revisan cada --watch segundos:
+        # así una fuente que no responde se cambia por otra sin esperar a que termine toda la búsqueda.
+        if not opts.dry_run and time.time() - last_sync >= opts.watch:
+            cmd_sync(cli, state, opts, quiet=True)
+            last_sync = time.time()
         t = e["track"]
         print(f"[{i}/{len(todo)}] {label(t)}")
         found = []  # candidatos de todas las consultas
@@ -526,11 +569,13 @@ def cmd_sync(cli, state, opts, quiet=False):
     except requests.RequestException as ex:
         print(f"! no pude leer las descargas: {ex}")
         return 0
-    status = {}
+    transfers = {}
     for u in users:
         for d in u.get("directories", []) or []:
             for f in d.get("files", []) or []:
-                status[(u.get("username"), f.get("filename"))] = f.get("state", "")
+                transfers[(u.get("username"), f.get("filename"))] = f
+    SONG_TIMEOUT[0] = opts.song_timeout
+    now = time.time()
 
     in_flight = changed = 0
     local = None  # índice de archivos descargados; se arma solo si hay algo que verificar
@@ -538,10 +583,8 @@ def cmd_sync(cli, state, opts, quiet=False):
         if e["status"] != "queued" or not e["current"]:
             continue
         c = e["current"]
-        st = status.get((c["username"], c["filename"]))
-        if st is None:
-            in_flight += 1  # aún no aparece (o ya se limpió de la lista)
-            continue
+        tr = transfers.get((c["username"], c["filename"]))
+        st = (tr or {}).get("state", "")
         if "Succeeded" in st:
             changed += 1
             # sin pérdida → detectar falsos;  con librería real → confirmar que es la misma grabación
@@ -564,7 +607,19 @@ def cmd_sync(cli, state, opts, quiet=False):
             if e["status"] == "queued":
                 in_flight += 1
         else:
-            in_flight += 1
+            # En cola del otro usuario, sin aparecer todavía o bajando. Solo se espera si de verdad avanza.
+            got = (tr or {}).get("bytesTransferred") or 0
+            if got > e.get("prog_bytes", 0):
+                e["prog_bytes"], e["prog_at"] = got, now
+            moving = "InProgress" in st and now - e.get("prog_at", now) < opts.stall
+            waited = now - e.get("cand_at", now)
+            song = now - e.get("started_at", now)
+            if not moving and (waited >= opts.candidate_wait or song >= opts.song_timeout):
+                changed += 1
+                why = "descarga estancada" if "InProgress" in st else "la fuente no respondió"
+                give_up_waiting(cli, e, tr, why, quiet)
+            if e["status"] == "queued":
+                in_flight += 1
     save_state(state)
     if not quiet and (changed or not getattr(opts, "_watching", False)
                       or time.time() - getattr(opts, "_last_beat", 0) > 600):
@@ -593,12 +648,12 @@ def cmd_report(state, opts):
     fmts = Counter(F.LABEL[(e.get("current") or {}).get("format") or "mp3"] for e in state.values()
                    if e["status"] in ("downloaded", "queued"))
     print(f"\nResumen (formato pedido: {opts.target}):")
-    for k in ("downloaded", "queued", "dry_run", "pending", "not_found", "failed", "skipped_ambiguous"):
+    for k in ("downloaded", "queued", "dry_run", "pending", "timeout", "not_found", "failed", "skipped_ambiguous"):
         if c.get(k):
             print(f"  {k:18} {c[k]}")
     if fmts:
         print("  (descargadas/en curso por formato: " + ", ".join(f"{k} {v}" for k, v in fmts.most_common()) + ")")
-    missing = [e for e in state.values() if e["status"] in ("not_found", "failed", "skipped_ambiguous")]
+    missing = [e for e in state.values() if e["status"] in ("not_found", "failed", "skipped_ambiguous", "timeout")]
     missing.sort(key=lambda e: e["track"]["index"])
     accepted = " / ".join(F.LABEL[x] for x in opts.preference)
     with open(opts.report_file, "w", encoding="utf-8") as fh:
@@ -607,7 +662,9 @@ def cmd_report(state, opts):
         for i, e in enumerate(missing, 1):
             t = e["track"]
             why = {"not_found": "sin resultados", "failed": "fallaron todos los candidatos",
-                   "skipped_ambiguous": "ambigua, revisar a mano"}[e["status"]]
+                   "skipped_ambiguous": "ambigua, revisar a mano",
+                   "timeout": "pendiente: ninguna fuente disponible a tiempo (intenta más tarde o con otro formato)"
+                   }[e["status"]]
             kb = f" | actual: {t['current_kbps']} kbps" if t.get("current_kbps") else ""
             fh.write(f"{i:03d}. {t['original']}{kb} | motivo: {why}\n")
     print(f"\n→ {opts.report_file} ({len(missing)} canciones)")
@@ -617,7 +674,7 @@ GROUPS = {
     "descargadas": ("downloaded",),
     "en_curso":    ("queued",),
     "sin_buscar":  ("pending", "dry_run"),
-    "faltantes":   ("not_found", "failed", "skipped_ambiguous"),
+    "faltantes":   ("not_found", "failed", "skipped_ambiguous", "timeout"),
 }
 GROUP_TITLES = {
     "descargadas": "DESCARGADAS",
@@ -660,8 +717,10 @@ def cmd_list(state, opts):
 def cmd_reset(state, opts):
     n = 0
     for e in state.values():
-        if e["status"] in ("not_found", "failed", "skipped_ambiguous", "dry_run"):
+        if e["status"] in ("not_found", "failed", "skipped_ambiguous", "dry_run", "timeout"):
             e.update(status="pending", candidates=[], tried=[], current=None)
+            for k in ("started_at", "cand_at", "prog_bytes", "prog_at"):
+                e.pop(k, None)
             n += 1
     save_state(state)
     print(f"{n} canciones vueltas a 'pending'.")
@@ -712,7 +771,14 @@ def main():
     ap.add_argument("--min-score", type=float, default=20)
     ap.add_argument("--search-timeout", type=int, default=15, help="segundos por búsqueda en slskd")
     ap.add_argument("--delay", type=float, default=3, help="pausa entre búsquedas (no saturar la red)")
-    ap.add_argument("--watch", type=int, default=60, help="segundos entre revisiones en 'run'")
+    ap.add_argument("--watch", type=int, default=15, help="segundos entre revisiones de las descargas")
+    ap.add_argument("--song-timeout", type=float, default=600,
+                    help="segundos máximos por canción desde su primer intento; si no hay una descarga "
+                         "avanzando, queda pendiente en el informe")
+    ap.add_argument("--candidate-wait", type=float, default=120,
+                    help="segundos que se espera a que arranque la descarga de un candidato antes de probar otro")
+    ap.add_argument("--stall", type=float, default=120,
+                    help="segundos sin recibir datos para considerar estancada una descarga en curso")
     ap.add_argument("--report-file", default="no_encontradas.txt")
     opts = ap.parse_args()
     try:

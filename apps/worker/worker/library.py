@@ -33,7 +33,7 @@ from worker.jobs import JobError
 TOOL = "library_upgrade"
 log = logging.getLogger("fadex.worker.library")
 
-FINAL = ("downloaded", "not_found", "failed", "skipped_ambiguous")
+FINAL = ("downloaded", "not_found", "failed", "skipped_ambiguous", "timeout")
 
 
 def downloads_dir() -> Path:
@@ -53,13 +53,16 @@ def _progress_of(state: dict) -> tuple[int, str]:
     """Avance a partir del state.json del upgrader: primero busca todo, luego vigila las descargas."""
     total = len(state) or 1
     c = Counter(e["status"] for e in state.values())
-    if c["pending"]:
-        searched = total - c["pending"]
-        return 10 + round(35 * searched / total), f"Buscando en Soulseek: {searched} de {total} pistas"
     done = sum(c[k] for k in FINAL)
     missing = c["not_found"] + c["failed"] + c["skipped_ambiguous"]
-    msg = f"Descargando: {c['downloaded']} listas, {c['queued']} en curso"
-    return 45 + round(40 * done / total), msg + (f", {missing} sin encontrar" if missing else "")
+    tail = f"{c['downloaded']} listas, {c['queued']} descargando"
+    tail += f", {missing} sin encontrar" if missing else ""
+    tail += f", {c['timeout']} pendientes" if c["timeout"] else ""
+    if c["pending"]:  # busca y descarga a la vez: lo ya encontrado baja mientras se busca el resto
+        searched = total - c["pending"]
+        pct = 10 + round(75 * (0.5 * searched + 0.5 * done) / total)
+        return pct, f"Buscando {searched} de {total} pistas · {tail}"
+    return 10 + round(75 * (0.5 * total + 0.5 * done) / total), f"Descargando · {tail}"
 
 
 def _slug(text: str) -> str:
@@ -133,6 +136,7 @@ def _summary(informe: Path, state: dict, in_library: int | None, to_upgrade: int
         "doubtful_match": sum("dudosa" in r["coincidencia"] for r in delivered),
         "rejected_other_recording": sum(not r.get("archivo") and "MISMA GRABACIÓN" in r["nota"] for r in rows),
         "not_found": c["not_found"] + c["failed"] + c["skipped_ambiguous"],
+        "pending_timeout": c["timeout"],   # ninguna fuente disponible a tiempo: reintentar más tarde u otro formato
         "unfinished": c["queued"] + c["pending"],
     }
 
@@ -209,7 +213,10 @@ async def run(job: ToolJob) -> dict:
 
     await jobs.progress(job.id, 10, f"Buscando en Soulseek: 0 de {len(tracks)} pistas")
     r = await proc.run([*script("slskd_fetch.py"), "run", "--formato", formato, "--downloads", str(downloads),
-                        "--delay", str(s.upgrade_search_delay), "--watch", str(s.upgrade_watch_seconds)],
+                        "--delay", str(s.upgrade_search_delay), "--watch", str(s.upgrade_watch_seconds),
+                        "--song-timeout", str(s.upgrade_song_timeout_seconds),
+                        "--candidate-wait", str(s.upgrade_candidate_wait_seconds),
+                        "--stall", str(s.upgrade_stall_seconds)],
                        cwd=work, env=env, log=logf, timeout=s.upgrade_max_hours * 3600, on_tick=tick, tick=10)
     state = _load(work / "state.json", {})
     if r.timed_out:
@@ -241,12 +248,16 @@ async def run(job: ToolJob) -> dict:
         await jobs.progress(job.id, 93, "Subiendo tu librería a Google Drive")
         drive_url = await _to_drive(job, entrega, work)
         summary["delivery"] = "drive" if drive_url else "pending"
-        message = (f"{summary['delivered']} de {len(tracks)} pistas mejoradas" if drive_url else
+        left = summary["pending_timeout"]
+        message = (f"{summary['delivered']} de {len(tracks)} pistas mejoradas"
+                   + (f", {left} pendiente{'s' if left != 1 else ''}" if left else "") if drive_url else
                    f"{summary['delivered']} pistas listas. Estamos preparando tu enlace de descarga: "
                    "te lo enviamos por WhatsApp.")
     else:
         summary["delivery"] = "none"
-        message = "No encontramos versiones en mejor calidad de tus pistas. Revisa el informe."
+        message = ("Ninguna fuente estuvo disponible a tiempo. Intenta de nuevo más tarde o con otro formato."
+                   if summary["pending_timeout"] else
+                   "No encontramos versiones en mejor calidad de tus pistas. Revisa el informe.")
 
     # 5. Limpiar: originales, descargas de slskd y, si ya está en Drive, la entrega local
     removed = await asyncio.to_thread(_remove_downloads, state, downloads)
