@@ -42,3 +42,5 @@ avisaremos por email y WhatsApp.*
 Cuando esté publicado, copia el enlace corto (Enviar → 🔗 → *Acortar URL*, queda como `https://forms.gle/...`) en
 `FADEX_FEEDBACK_FORM_URL` del `.env` del VPS. La app de escritorio solo abre enlaces de `forms.gle`,
 `docs.google.com` y `fadexlabs.com`.
+
+**Publicado** (2026-11-18): https://forms.gle/XY6eenKfkpDmTprb7 · en Drive como "FADEX Labs · Encuesta beta".
