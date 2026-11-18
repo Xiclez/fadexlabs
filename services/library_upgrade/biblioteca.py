@@ -101,7 +101,7 @@ def describe_track(path, root):
     stem = os.path.splitext(os.path.basename(path))[0]
     stem = re.sub(r"^\s*\d{1,3}\s*[-._)]\s*", "", stem)  # "03 - Artista - Tema" → "Artista - Tema"
     text = f"{artist} - {title}" if artist and title else clean(stem)
-    return {"path": path, "rel": os.path.relpath(path, root), "cls": cls, "info": info, "text": text}
+    return {"path": path, "rel": os.path.relpath(path, root).replace(os.sep, "/"), "cls": cls, "info": info, "text": text}
 
 
 def main():

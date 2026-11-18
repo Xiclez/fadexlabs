@@ -220,7 +220,7 @@ def main():
         auth_note = auth["text"] if auth and auth.get("verdict") in ("falso", "hires_falso", "dudoso") else ""
         match_note = f"coincidencia dudosa con el original ({match['text']})" \
             if match and match.get("verdict") == "dudosa" else ""
-        rows.append([t["index"], t["original"], os.path.relpath(dst, args.out), F.describe(src_cls, src_info),
+        rows.append([t["index"], t["original"], os.path.relpath(dst, args.out).replace(os.sep, "/"), F.describe(src_cls, src_info),
                      F.describe(out_cls, out_info), conversion, verdict, (match or {}).get("text", ""), dur,
                      c["username"], "; ".join(x for x in (note, auth_note, match_note, q) if x) or "ok"])
 
