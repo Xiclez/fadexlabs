@@ -10,19 +10,9 @@ export function cx(...c: (string | false | null | undefined)[]) {
 
 // ---------- Marca ----------
 
-/** Matraz con ojo, en línea (versión del dossier) para tamaños chicos. */
+/** Matraz con ojo: el mismo del logo del hero y del favicon (src/app/icon.png), para tamaños chicos. */
 export function FlaskMark({ className = "h-8 w-8" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 48 48" fill="none" aria-hidden className={className}>
-      <rect x="18" y="3" width="12" height="9" rx="2.5" stroke="var(--color-cyan)" strokeWidth="2" />
-      <path d="M20 12 10 36a5 5 0 0 0 4.6 7h18.8A5 5 0 0 0 38 36L28 12" stroke="var(--color-cyan)" strokeWidth="2" strokeLinejoin="round" />
-      <path d="M15 31h18" stroke="var(--color-magenta)" strokeWidth="2" strokeLinecap="round" />
-      <circle cx="24" cy="25" r="4.5" fill="var(--color-violet)" />
-      <circle cx="24" cy="25" r="2" fill="var(--color-cyan)" />
-      <circle cx="35" cy="9" r="1.6" fill="var(--color-cyan)" />
-      <circle cx="12" cy="18" r="1.6" fill="var(--color-magenta)" />
-    </svg>
-  );
+  return <Image src="/brand/fadex-mark.png" alt="" aria-hidden width={96} height={96} className={className} />;
 }
 
 export function Wordmark() {
