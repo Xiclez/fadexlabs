@@ -24,7 +24,12 @@ with open(out, "a", encoding="utf-8") as fh:
         resp = {"matches": [], "location": {"accuracy": 0.01}, "timestamp": 0, "timezone": "UTC"}
         if found:
             resp["matches"] = [{"id": "1", "offset": 10.0, "timeskew": 0.0, "frequencyskew": 0.0}]
-            resp["track"] = {"layout": "5", "type": "MUSIC", "key": "1", "title": found[0], "subtitle": found[1]}
+            resp["track"] = {"layout": "5", "type": "MUSIC", "key": "1", "title": found[0], "subtitle": found[1],
+                             "url": "https://www.shazam.com/track/1/tema", "isrc": "MX0000000001",
+                             "genres": {"primary": "Dance"}, "images": {"coverart": "https://is1.example/cover.jpg"},
+                             "sections": [{"type": "SONG", "metadata": [{"title": "Album", "text": "Disco Hueco"},
+                                                                        {"title": "Label", "text": "Sello Tres"},
+                                                                        {"title": "Released", "text": "2025"}]}]}
         fh.write(json.dumps({"t": t, "window": 12, "response": resp}, ensure_ascii=False) + "\n")
         fh.flush()
         if os.environ.get("FAKE_SHAZAM_SLOW") and i >= 9:   # un escaneo que no termina a tiempo

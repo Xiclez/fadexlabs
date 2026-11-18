@@ -1,0 +1,35 @@
+<!-- Plantilla EmailJS "fadex_feedback": opinión de un usuario al terminar o detener un trabajo (web o escritorio).
+     Llega a {{to_email}} (FADEX_FEEDBACK_TO, por defecto ibarraorvil@gmail.com). Responder al correo le contesta
+     al usuario (Reply To = {{reply_to}}). Variables: {{user_name}} {{user_email}} {{tool}} {{source}} {{rating}}
+     {{stars}} {{comment}} {{outcome}} {{job_ref}} {{details}}. -->
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#07080d;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#07080d;">
+    <tr>
+      <td align="center" style="padding:28px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+          <tr><td style="height:4px;line-height:4px;font-size:0;background:#8b5cf6;background-image:linear-gradient(90deg,#e040c8,#8b5cf6 50%,#22d3ee);">&nbsp;</td></tr>
+          <tr>
+            <td style="background:#141522;border:1px solid #23243a;border-top:0;padding:28px 30px;font-family:Arial,Helvetica,sans-serif;color:#eceaf6;">
+              <p style="margin:0;font-size:11px;letter-spacing:3px;text-transform:uppercase;color:#c6f432;">Encuesta beta · {{tool}}</p>
+              <p style="margin:14px 0 0;font-size:34px;line-height:1;color:#c6f432;letter-spacing:4px;">{{stars}}</p>
+              <p style="margin:6px 0 0;font-size:14px;color:#9a99b3;">{{rating}} de 5 · {{outcome}} · desde la {{source}}</p>
+
+              <div style="margin-top:22px;padding:16px 18px;background:#0f1018;border-left:3px solid #8b5cf6;font-size:15px;line-height:1.55;color:#eceaf6;white-space:pre-wrap;">{{comment}}</div>
+
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin-top:22px;font-size:13px;line-height:1.5;">
+                <tr><td style="color:#6b6a85;padding:3px 0;width:110px;">Usuario</td><td style="color:#eceaf6;">{{user_name}}</td></tr>
+                <tr><td style="color:#6b6a85;padding:3px 0;">Email</td><td><a href="mailto:{{user_email}}" style="color:#22d3ee;">{{user_email}}</a></td></tr>
+                <tr><td style="color:#6b6a85;padding:3px 0;">Trabajo</td><td style="color:#eceaf6;font-family:Consolas,monospace;font-size:12px;">{{job_ref}}</td></tr>
+                <tr><td style="color:#6b6a85;padding:3px 0;vertical-align:top;">Resumen</td><td style="color:#9a99b3;font-family:Consolas,monospace;font-size:12px;word-break:break-all;">{{details}}</td></tr>
+              </table>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

@@ -13,12 +13,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import FileResponse
 from starlette.requests import ClientDisconnect
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 
 from app.core import ratelimit
 from app.core.config import get_settings
 from app.core.deps import DB, BetaUser
-from app.models import JobStatus, Tool, ToolJob, User
+from app.models import ACTIVE, Feedback, JobStatus, Tool, ToolJob, User
 from app.schemas.tools import UPGRADE_FORMATS, JobOut, JobPage, ToolLimits, ToolsInfo, UploadInitIn, UploadOut
 from app.services import tools as svc
 
@@ -202,9 +202,49 @@ async def my_jobs(user: ToolUser, db: DB, limit: int = 20, offset: int = 0) -> d
     return {"items": [svc.job_out(j) for j in rows], "total": total}
 
 
+async def _feedback_given(db, user: User, job: ToolJob) -> bool:
+    return (await db.execute(select(Feedback.id).where(Feedback.user_id == user.id,
+                                                      Feedback.job_ref == str(job.id)).limit(1))).first() is not None
+
+
 @router.get("/jobs/{job_id}", response_model=JobOut)
 async def job_detail(job_id: uuid.UUID, user: ToolUser, db: DB) -> dict:
-    return svc.job_out(await _own_job(db, user, job_id))
+    job = await _own_job(db, user, job_id)
+    return svc.job_out(job, await _feedback_given(db, user, job))
+
+
+@router.post("/jobs/{job_id}/stop", response_model=JobOut)
+async def stop_job(job_id: uuid.UUID, user: ToolUser, db: DB) -> dict:
+    """Detener: en cola se cancela; en proceso, el worker corta y entrega lo conseguido hasta ese momento."""
+    job = await _own_job(db, user, job_id)
+    now = svc.utcnow()
+    # en cola: solo si el worker no lo tomó en este instante (UPDATE condicionado)
+    res = await db.execute(update(ToolJob).where(ToolJob.id == job.id, ToolJob.status == JobStatus.queued).values(
+        status=JobStatus.cancelled, finished_at=now, stop_requested_at=now,
+        message="Lo detuviste antes de que empezara."))
+    if res.rowcount:
+        await db.commit()
+        svc.remove_tree(svc.job_dir(job.id))  # el archivo subido ya no se necesita
+    else:
+        await db.refresh(job)
+        if job.status not in ACTIVE:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Este trabajo ya terminó.")
+        if job.stop_requested_at is None:
+            job.stop_requested_at = now
+            job.message = "Deteniendo: se entrega lo conseguido hasta ahora…"
+        await db.commit()
+    await db.refresh(job)
+    return svc.job_out(job)
+
+
+@router.get("/jobs/{job_id}/visual")
+async def job_visual(job_id: uuid.UUID, user: ToolUser, db: DB) -> FileResponse:
+    """Tracklist ID: forma de onda del set y tracks con metadatos y enlaces (results/visual.json)."""
+    job = await _own_job(db, user, job_id)
+    path = svc.results_dir(job.id) / "visual.json"
+    if not (job.status == JobStatus.done and (job.result or {}).get("visual") and path.is_file()):
+        raise _not_found
+    return FileResponse(path, media_type="application/json")
 
 
 @router.get("/jobs/{job_id}/files/{name}")

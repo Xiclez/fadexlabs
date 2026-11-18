@@ -1,0 +1,53 @@
+<!-- Plantilla EmailJS "fadex_generic": TODOS los avisos de FADEX (confirmar email, restablecer contraseña,
+     cuenta existente, trabajo listo / con error). Variables: {{to_email}} {{to_name}} {{subject}} {{title}}
+     {{{message_html}}} {{button_label}} {{button_url}} {{footer}}. Pegar en EmailJS → Email Templates →
+     Content → "Edit content" → modo código (<>). -->
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>{{subject}}</title>
+</head>
+<body style="margin:0;padding:0;background:#07080d;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#07080d;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+          <!-- barra de degradado de marca -->
+          <tr><td style="height:4px;line-height:4px;font-size:0;background:#8b5cf6;background-image:linear-gradient(90deg,#e040c8,#8b5cf6 50%,#22d3ee);">&nbsp;</td></tr>
+          <tr>
+            <td style="background:#141522;border:1px solid #23243a;border-top:0;padding:32px 32px 28px;">
+              <table role="presentation" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td style="padding-right:12px;"><img src="https://fadexlabs.com/brand/fadex-logo.jpg" width="44" height="44" alt="FADEX Labs" style="display:block;border-radius:10px;"></td>
+                  <td style="font-family:Arial,Helvetica,sans-serif;font-size:16px;font-weight:bold;letter-spacing:2px;color:#eceaf6;">FADEX <span style="color:#8b5cf6;">LABS</span></td>
+                </tr>
+              </table>
+              <h1 style="margin:28px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:22px;line-height:1.25;text-transform:uppercase;color:#eceaf6;">{{title}}</h1>
+              <div style="margin-top:14px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:#c9c8dc;">
+                {{{message_html}}}
+              </div>
+              <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:24px;">
+                <tr>
+                  <td style="border-radius:999px;background:#8b5cf6;background-image:linear-gradient(90deg,#e040c8,#8b5cf6,#22d3ee);">
+                    <a href="{{button_url}}" style="display:inline-block;padding:13px 28px;font-family:Arial,Helvetica,sans-serif;font-size:14px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:999px;">{{button_label}}</a>
+                  </td>
+                </tr>
+              </table>
+              <p style="margin:22px 0 0;font-family:Arial,Helvetica,sans-serif;font-size:12px;line-height:1.5;color:#6b6a85;">
+                Si el botón no funciona, copia este enlace en tu navegador:<br>
+                <a href="{{button_url}}" style="color:#22d3ee;word-break:break-all;">{{button_url}}</a>
+              </p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:18px 8px;font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:1px;color:#6b6a85;text-align:center;">{{footer}}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

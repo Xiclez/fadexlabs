@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from enum import StrEnum
 
-from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, Text, Uuid
+from sqlalchemy import JSON, BigInteger, DateTime, ForeignKey, Index, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
@@ -20,6 +20,7 @@ class JobStatus(StrEnum):
     running = "running"
     done = "done"
     failed = "failed"
+    cancelled = "cancelled"  # el usuario lo detuvo antes de que empezara
     expired = "expired"      # resultados borrados tras result_ttl_days
 
 
@@ -52,7 +53,26 @@ class ToolJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[dict | None] = mapped_column(JSON)        # {"summary": {...}, "files": [...], "drive_url": ...}
+    # El usuario pidió detenerlo: el worker corta lo que esté corriendo y entrega lo conseguido hasta ahí.
+    stop_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     @property
     def total_parts(self) -> int:
         return -(-self.input_bytes // self.chunk_size) if self.chunk_size else 0
+
+
+class Feedback(Base):
+    """Opinión del usuario al terminar o detener un trabajo (web o app de escritorio). Una por trabajo."""
+    __tablename__ = "feedback"
+    __table_args__ = (UniqueConstraint("user_id", "job_ref", name="uq_feedback_user_job"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    source: Mapped[str] = mapped_column(String(16))      # web | desktop
+    tool: Mapped[str] = mapped_column(String(24))
+    job_ref: Mapped[str] = mapped_column(String(64))     # id del trabajo (web) o del trabajo local (escritorio)
+    rating: Mapped[int]                                   # 1-5 estrellas
+    comment: Mapped[str] = mapped_column(String(500), default="")
+    stopped: Mapped[bool] = mapped_column(default=False)  # lo detuvo el usuario (no terminó solo)
+    details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

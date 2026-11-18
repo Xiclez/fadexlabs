@@ -173,9 +173,10 @@ def available_files(job: ToolJob) -> list[str]:
     return [n for n in RESULT_FILES.get(job.tool, ()) if n in listed]
 
 
-def job_out(job: ToolJob) -> dict:
+def job_out(job: ToolJob, feedback_given: bool = False) -> dict:
     """Vista pública de un trabajo. `error` (detalle interno) nunca se incluye."""
     result = job.result or {}
+    summary = result.get("summary") or {}
     out = {
         "id": job.id, "tool": job.tool, "status": job.status, "input_name": job.input_name,
         "input_bytes": job.input_bytes, "options": job.options or {}, "progress": job.progress,
@@ -183,6 +184,10 @@ def job_out(job: ToolJob) -> dict:
         "finished_at": aware(job.finished_at), "expires_at": aware(job.expires_at),
         "summary": result.get("summary"), "files": available_files(job),
         "drive_url": result.get("drive_url") if job.status == JobStatus.done else None,
+        "stopping": job.stop_requested_at is not None and job.status in ACTIVE,
+        "stopped": bool(summary.get("stopped")) if isinstance(summary, dict) else False,
+        "visual": bool(result.get("visual")) and job.status == JobStatus.done,
+        "feedback_given": feedback_given,
     }
     if job.status == JobStatus.uploading:
         out.update(chunk_size=job.chunk_size, total_parts=job.total_parts, received_parts=job.received_parts)

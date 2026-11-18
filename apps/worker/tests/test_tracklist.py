@@ -73,7 +73,27 @@ async def test_tracklist_end_to_end(client, set_wav):
     # limpieza: el audio subido y la carpeta de trabajo ya no existen; los resultados sí
     root = svc.job_dir(job.id)
     assert not (root / "input").exists() and not (root / "work").exists()
-    assert sorted(p.name for p in (root / "results").iterdir()) == ["tracklist.csv", "tracklist.txt"]
+    assert sorted(p.name for p in (root / "results").iterdir()) == ["tracklist.csv", "tracklist.txt", "visual.json"]
+
+    # vista estilo SoundCloud: forma de onda del set + tramos con metadatos y enlaces
+    assert detail["visual"] is True and detail["stopped"] is False
+    view = (await client.get(f"/api/tools/jobs/{job.id}/visual", headers=h)).json()
+    assert view["duration"] == pytest.approx(360, abs=1)
+    assert 1000 <= len(view["peaks"]) <= 1200 and max(view["peaks"]) == 100 and min(view["peaks"]) >= 0
+    t = view["tracks"]
+    assert [(x["n"], x["start"]) for x in t] == [(1, 0), (2, 60), (3, 140), (4, 212), (5, 300)]
+    assert [x["end"] for x in t] == [60, 140, 212, 300, pytest.approx(360, abs=1)]
+    first, hueco, unknown = t[0], t[2], t[3]
+    assert first["links"]["spotify"] == "https://open.spotify.com/track/SPOTIFY1"      # id directo de ACRCloud
+    assert first["links"]["youtube"] == "https://www.youtube.com/watch?v=YTVID1"
+    assert first["links"]["deezer"] == "https://www.deezer.com/track/123"
+    assert first["meta"]["label"] == "Sello" and first["meta"]["year"] == "2024" and first["meta"]["genre"] == "House"
+    assert first["confidence"] == 100 and first["level"] == "alta"
+    assert hueco["links"]["youtube"].startswith("https://www.youtube.com/results?search_query=Artista+Tres+Tema+Del+Hueco")
+    assert hueco["links"]["shazam"] == "https://www.shazam.com/track/1/tema"             # metadatos de Shazam
+    assert hueco["meta"] == {"album": "Disco Hueco", "label": "Sello Tres", "year": "2025", "genre": "Dance",
+                             "isrc": "MX0000000001", "cover": "https://is1.example/cover.jpg"}
+    assert unknown["unidentified"] and unknown["links"] == {} and unknown["note"].startswith("aparece en")
     assert not list(svc.data_dir().rglob("*.wav")) and not list(svc.data_dir().rglob("*.mp3"))
     assert job.expires_at is not None
 
@@ -184,3 +204,43 @@ async def test_unexpected_error_does_not_kill_the_worker(client, set_wav, monkey
     # el siguiente trabajo se procesa con normalidad
     async with SessionLocal() as db:
         assert (await db.get(ToolJob, uuid.UUID(first["id"]))).status == "failed"
+
+
+async def test_stop_builds_tracklist_with_what_was_recognized(client, set_wav, monkeypatch):
+    """Detener a media corrida: ACRCloud ya terminó y Shazam se corta; se entrega lo reconocido hasta ahí."""
+    monkeypatch.setenv("FAKE_SHAZAM_SLOW", "1")
+    access = await signup(client)
+    queued = await upload(client, access, set_wav, "tracklist")
+    work = svc.job_dir(uuid.UUID(queued["id"])) / "work"
+
+    async def stop_after_acr(job_id):  # el usuario pulsa "Detener" mientras Shazam sigue escaneando
+        return (work / "acr_raw.json").exists()
+
+    monkeypatch.setattr(jobs, "stop_requested", stop_after_acr)
+    job = await run_next()
+    assert job.status == "done", (job.message, job.error)
+    summary = job.result["summary"]
+    assert summary["stopped"] is True and summary["sources"] == ["acrcloud", "shazam"]
+    assert summary["notes"][0] == "Lo detuviste: el tracklist se armó con lo reconocido hasta ese momento."
+    assert any("antes de que lo detuvieras" in n for n in summary["notes"])
+    assert job.message.startswith("Detenido · ") and job.result["visual"] is True
+    assert "Artista Tres - Tema Del Hueco" in (svc.results_dir(job.id) / "tracklist.txt").read_text(encoding="utf-8")
+
+
+async def test_stop_with_only_shazam_partial(client, set_wav, monkeypatch):
+    """ACRCloud no disponible y el usuario detiene: se entrega lo que Shazam alcanzó a reconocer."""
+    async def always(job_id):
+        return True
+
+    monkeypatch.setenv("FAKE_ACR_FAIL", "1")
+    monkeypatch.setenv("FAKE_SHAZAM_SLOW", "1")
+    monkeypatch.setattr(jobs, "stop_requested", always)
+    access = await signup(client)
+    await upload(client, access, set_wav, "tracklist")
+    job = await run_next()
+    assert job.status == "done", (job.message, job.error)
+    summary = job.result["summary"]
+    assert summary["stopped"] is True and summary["sources"] == ["shazam"]
+    assert summary["notes"][:2] == ["Lo detuviste: el tracklist se armó con lo reconocido hasta ese momento.",
+                                    "ACRCloud no estuvo disponible: el tracklist se armó con Shazam."]
+    assert job.message.startswith("Detenido · ")

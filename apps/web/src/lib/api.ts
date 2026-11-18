@@ -126,7 +126,7 @@ export type Message = { detail: string };
 // ---------- herramientas de la beta ----------
 
 export type ToolName = "tracklist" | "library_upgrade";
-export type JobStatus = "uploading" | "queued" | "running" | "done" | "failed" | "expired";
+export type JobStatus = "uploading" | "queued" | "running" | "done" | "failed" | "cancelled" | "expired";
 
 export type ToolLimits = { max_bytes: number; per_day: number; extensions: string[] };
 export type ToolsInfo = {
@@ -156,6 +156,33 @@ export type Job = {
   summary: Record<string, unknown> | null;
   files: string[];
   drive_url: string | null;
+  stopping: boolean;        // pidió detenerlo: el worker está cerrando con lo conseguido
+  stopped: boolean;         // terminó porque lo detuvo el usuario
+  visual: boolean;          // Tracklist ID: forma de onda y enlaces disponibles
+  feedback_given: boolean;  // ya respondió la encuesta
 };
+
+// ---------- Tracklist ID: vista con forma de onda (GET /tools/jobs/{id}/visual) ----------
+
+export type TrackLinks = Partial<Record<"youtube" | "spotify" | "beatport" | "soundcloud" | "apple_music" | "deezer" | "shazam", string>>;
+
+export type VisualTrack = {
+  n: number;
+  start: number;
+  end: number;
+  artist: string;
+  title: string;
+  unidentified: boolean;
+  source: string;
+  confidence: number | null;
+  level: "alta" | "media" | "baja" | null;
+  note: string;
+  meta: { album?: string; label?: string; year?: string; genre?: string; isrc?: string; cover?: string };
+  links: TrackLinks;
+};
+
+export type TracklistVisual = { duration: number | null; peaks: number[]; tracks: VisualTrack[] };
+
+export type FeedbackResult = { detail: string; form_url: string | null };
 
 export type JobPage = { items: Job[]; total: number };

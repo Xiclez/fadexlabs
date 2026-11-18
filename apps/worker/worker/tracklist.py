@@ -7,6 +7,7 @@ Sin la verificación con Panako de djset/tracklist.ps1 (fuera de la beta).
 import asyncio
 import csv
 import json
+import logging
 import os
 import shlex
 import shutil
@@ -16,6 +17,7 @@ from app.core.config import get_settings
 from app.models import ToolJob
 from app.services import tools as svc
 from worker import jobs, proc
+from worker import tracklist_visual as visual
 from worker.jobs import JobError
 
 TOOL = "tracklist"
@@ -101,17 +103,29 @@ async def run(job: ToolJob) -> dict:
     if not src.exists():
         raise JobError("No encontramos el archivo subido. Vuelve a subirlo.", f"falta {src}")
 
+    async def stop() -> bool:  # el usuario pulsó "Detener": se arma el tracklist con lo reconocido hasta ahí
+        return await jobs.stop_requested(job.id)
+
+    def stopped_early(why: str) -> dict:
+        return {"summary": {"tracks": 0, "unidentified": 0, "sources": [], "notes": [why], "stopped": True,
+                            "duration_seconds": None, "confidence": None}, "files": [],
+                "message": "Detenido · " + why}
+
     # 1. Comprimir: mismo reconocimiento con una fracción del tamaño (WAV de 2 h: ~1.2 GB → ~85 MB)
     await jobs.progress(job.id, 5, "Comprimiendo el set")
     scan_set = work / f"{job.id}_scan.mp3"
     r = await proc.run([*proc.script(TOOL, "comprimir.py"), str(src), str(scan_set), "--kbps", str(s.tracklist_kbps)],
-                       log=log, timeout=3600)
+                       log=log, timeout=3600, should_stop=stop)
+    if r.stopped:
+        return stopped_early("Lo detuviste antes de reconocer los temas.")
     if not r.ok:
         raise JobError("No pudimos procesar el audio del set.", r.tail())
     if not scan_set.exists():  # ya era un MP3 liviano: comprimir.py indica usar el original tal cual
         scan_set = src
 
     seconds = ((job.result or {}).get("input") or {}).get("seconds")
+    # forma de onda en paralelo con el reconocimiento (antes de que se borre el audio)
+    peaks_task = asyncio.create_task(asyncio.to_thread(visual.peaks, scan_set, seconds))
     fragments = max(1, int(((seconds or 0) - 12) // 20) + 1)   # los que consultará scan.py (12 s cada 20 s)
     acr_json, shazam_jsonl = work / "acr_raw.json", work / "raw.jsonl"
     use_acr = bool(os.environ.get("ACRCLOUD_TOKEN") or s.acr_scan_cmd)
@@ -137,16 +151,17 @@ async def run(job: ToolJob) -> dict:
     # 2. Los dos motores a la vez. Ninguno espera al otro ni lo detiene.
     async def acr() -> proc.Result:
         r = await proc.run([*_cmd(s.acr_scan_cmd, "acr_scan.py"), str(scan_set), str(acr_json)],
-                           log=work / "acr.log", timeout=s.acr_max_seconds, on_tick=publish)
-        state["acr"] = "listo" if r.ok and acr_json.exists() else "no disponible"
+                           log=work / "acr.log", timeout=s.acr_max_seconds, on_tick=publish, should_stop=stop)
+        state["acr"] = "listo" if r.ok and acr_json.exists() else "detenido" if r.stopped else "no disponible"
         await publish()
         return r
 
     async def shazam() -> proc.Result:
         r = await proc.run([*_cmd(s.shazam_scan_cmd, "scan.py"), str(scan_set), str(shazam_jsonl),
                             "--max-fail-streak", str(s.shazam_fail_streak)],
-                           log=work / "shazam.log", timeout=s.shazam_fallback_max_seconds, on_tick=publish)
-        state["shazam"] = ("listo" if r.ok else "saturado" if r.code == SATURATED else
+                           log=work / "shazam.log", timeout=s.shazam_fallback_max_seconds, on_tick=publish,
+                           should_stop=stop)
+        state["shazam"] = ("listo" if r.ok else "detenido" if r.stopped else "saturado" if r.code == SATURATED else
                            "cortado por tiempo" if r.timed_out else "no disponible")
         return r
 
@@ -177,10 +192,15 @@ async def run(job: ToolJob) -> dict:
             await asyncio.gather(shazam_task, return_exceptions=True)
 
     # 3. Qué dio cada motor
+    stopped = "detenido" in (state["acr"], state["shazam"])
     sources, notes, args = [], [], []
+    if stopped:
+        notes.append("Lo detuviste: el tracklist se armó con lo reconocido hasta ese momento.")
     if state["acr"] == "listo":
         sources.append("acrcloud")
         args += ["--acr", str(acr_json)]
+    elif state["acr"] == "detenido":
+        notes.append("ACRCloud no alcanzó a terminar antes de que lo detuvieras.")
     elif use_acr:
         notes.append("ACRCloud no estuvo disponible: el tracklist se armó con Shazam.")
     else:
@@ -194,7 +214,11 @@ async def run(job: ToolJob) -> dict:
         notes.append({
             "saturado": f"Shazam rechazó peticiones por saturación y se detuvo ({covered}).",
             "cortado por tiempo": f"Shazam se cortó por tiempo ({covered}).",
+            "detenido": f"Shazam {covered} antes de que lo detuvieras.",
         }.get(state["shazam"], "Shazam no estuvo disponible."))
+    if not sources and stopped:
+        peaks_task.cancel()
+        return stopped_early("Lo detuviste antes de que se reconociera algún tema.")
     if not sources:
         detail = "\n".join(x.tail(800) for x in (acr_result, shazam_result) if x) or "sin motores configurados"
         if use_shazam and state["shazam"] == "listo" and not use_acr:
@@ -210,8 +234,25 @@ async def run(job: ToolJob) -> dict:
         shutil.copyfile(work / name, results / name)
 
     summary = _summary(results / "tracklist.csv", sources, notes, seconds)
+    summary["stopped"] = stopped
     found, ids = summary["tracks"], summary["unidentified"]
     message = f"{found} temas identificados" if found != 1 else "1 tema identificado"
     if ids:
         message += f", {ids} tramo{'s' if ids != 1 else ''} sin identificar"
-    return {"summary": summary, "files": ["tracklist.txt", "tracklist.csv"], "message": message}
+    if stopped:
+        message = "Detenido · " + message
+
+    # 5. Vista con forma de onda y enlaces (si falla, el tracklist se entrega igual)
+    has_visual = False
+    try:
+        wave = await peaks_task
+        tracks = visual.enrich(results / "tracklist.csv", acr_json if "acrcloud" in sources else None,
+                               shazam_jsonl if "shazam" in sources else None, seconds)
+        duration = seconds or (tracks[-1]["end"] if tracks else None)
+        with open(results / "visual.json", "w", encoding="utf-8") as fh:
+            json.dump({"duration": duration, "peaks": wave, "tracks": tracks}, fh, ensure_ascii=False)
+        has_visual = True
+    except Exception:  # noqa: BLE001
+        logging.getLogger("fadex.worker.tracklist").exception("no se pudo armar la vista de %s", job.id)
+    return {"summary": summary, "files": ["tracklist.txt", "tracklist.csv"], "message": message,
+            "visual": has_visual}

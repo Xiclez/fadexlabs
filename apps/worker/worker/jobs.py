@@ -67,14 +67,22 @@ async def finish(job_id: uuid.UUID, *, result: dict | None = None, failure: JobE
     url = f"{s.public_url}/herramientas/trabajos/{job_id}"
     if status == JobStatus.done:
         body = (f"Hola,\n\nTu trabajo de {title} con «{name}» terminó: {message}\n\n"
-                f"Míralo y descarga los resultados aquí:\n{url}\n\n"
-                f"Los resultados estarán disponibles {s.result_ttl_days} días.\n")
+                f"Los resultados estarán disponibles {s.result_ttl_days} días.")
         subject = f"{title}: tu trabajo está listo · FADEX Labs"
+        heading, button = "Tu trabajo está listo", ("Ver resultados", url)
     else:
         body = (f"Hola,\n\nNo pudimos terminar tu trabajo de {title} con «{name}»: {message}\n\n"
-                f"Detalles: {url}\n\nSi se repite, escríbenos por WhatsApp y lo revisamos.\n")
+                "Si se repite, escríbenos por WhatsApp y lo revisamos.")
         subject = f"{title}: no pudimos terminar tu trabajo · FADEX Labs"
-    await email.send(user.email, subject, body)
+        heading, button = "No pudimos terminar tu trabajo", ("Ver detalles", url)
+    await email.send(user.email, subject, body, title=heading, button=button, to_name=user.display_name)
+
+
+async def stop_requested(job_id: uuid.UUID) -> bool:
+    """¿El usuario pidió detener el trabajo? (lo consultan los scripts en cada aviso de avance)"""
+    async with SessionLocal() as db:
+        return (await db.execute(select(ToolJob.stop_requested_at).where(ToolJob.id == job_id))
+                ).scalar_one_or_none() is not None
 
 
 async def requeue_orphans() -> int:

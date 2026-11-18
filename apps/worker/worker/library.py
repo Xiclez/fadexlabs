@@ -183,6 +183,9 @@ async def run(job: ToolJob) -> dict:
     env = {"SLSKD_URL": s.slskd_url, "SLSKD_API_KEY": s.slskd_api_key}
     notes: list[str] = []
 
+    async def stop() -> bool:  # el usuario pulsó "Detener": se entrega lo conseguido hasta ahí
+        return await jobs.stop_requested(job.id)
+
     # 1. Extraer y analizar (se salta si el trabajo se está reanudando tras un reinicio del worker)
     zip_path = svc.input_path(job)
     if not (work / "tracks.json").exists():
@@ -191,7 +194,10 @@ async def run(job: ToolJob) -> dict:
         await jobs.progress(job.id, 3, "Analizando tu librería")
         r = await proc.run([*script("biblioteca.py"), str(zip_path.parent), str(job.id), "-o", "tracks.json",
                             "--csv", "revision.csv", "--formato", formato, "--max-gb", str(s.library_max_unpacked_gb)],
-                           cwd=work, log=logf, timeout=2 * 3600)
+                           cwd=work, log=logf, timeout=2 * 3600, should_stop=stop)
+        if r.stopped:
+            return {"summary": {**_summary(Path("-"), {}, None, 0, formato), "stopped": True}, "files": [],
+                    "message": "Lo detuviste antes de empezar a buscar: no hay nada que entregar."}
         if not r.ok or not (work / "tracks.json").exists():
             raise JobError("No pudimos leer tu librería. Revisa que el .zip no esté dañado.", r.tail())
     zip_path.unlink(missing_ok=True)  # ya está extraída en work/biblioteca
@@ -217,9 +223,15 @@ async def run(job: ToolJob) -> dict:
                         "--song-timeout", str(s.upgrade_song_timeout_seconds),
                         "--candidate-wait", str(s.upgrade_candidate_wait_seconds),
                         "--stall", str(s.upgrade_stall_seconds)],
-                       cwd=work, env=env, log=logf, timeout=s.upgrade_max_hours * 3600, on_tick=tick, tick=10)
+                       cwd=work, env=env, log=logf, timeout=s.upgrade_max_hours * 3600, on_tick=tick, tick=10,
+                       should_stop=stop)
     state = _load(work / "state.json", {})
-    if r.timed_out:
+    stopped = r.stopped  # `r` se reutiliza abajo
+    if stopped:
+        notes.append("Lo detuviste: se entrega lo conseguido hasta ese momento.")
+        await jobs.progress(job.id, 86, "Deteniendo: armando lo conseguido hasta ahora")
+        await asyncio.to_thread(_cancel_pending, state)
+    elif r.timed_out:
         notes.append(f"Se alcanzó el tiempo máximo ({s.upgrade_max_hours:g} h): se entrega lo conseguido hasta ahora.")
         await asyncio.to_thread(_cancel_pending, state)
     elif not r.ok:
@@ -241,6 +253,7 @@ async def run(job: ToolJob) -> dict:
             files.append(name)
     summary = _summary(results / "informe.csv", state, in_library, len(tracks), formato)
     summary["notes"] = notes
+    summary["stopped"] = stopped
 
     # 4. Entregar por Google Drive
     drive_url = None
@@ -258,6 +271,9 @@ async def run(job: ToolJob) -> dict:
         message = ("Ninguna fuente estuvo disponible a tiempo. Intenta de nuevo más tarde o con otro formato."
                    if summary["pending_timeout"] else
                    "No encontramos versiones en mejor calidad de tus pistas. Revisa el informe.")
+
+    if stopped:
+        message = "Detenido · " + message
 
     # 5. Limpiar: originales, descargas de slskd y, si ya está en Drive, la entrega local
     removed = await asyncio.to_thread(_remove_downloads, state, downloads)

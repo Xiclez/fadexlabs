@@ -56,6 +56,10 @@ class JobOut(BaseModel):
     expires_at: datetime | None
     summary: dict | None = None
     files: list[str] = []
+    stopping: bool = False        # pidió detenerlo y el worker está cerrando
+    stopped: bool = False         # terminó porque lo detuvo el usuario (resultados parciales)
+    visual: bool = False          # Tracklist ID: hay forma de onda y enlaces (GET /jobs/{id}/visual)
+    feedback_given: bool = False  # ya respondió la encuesta de este trabajo
     drive_url: str | None = None
     # mientras se sube:
     chunk_size: int | None = None
@@ -100,3 +104,24 @@ class AdminJobOut(JobOut):
     user_id: uuid.UUID
     user_email: str
     error: str | None
+
+
+class FeedbackIn(BaseModel):
+    """Encuesta al terminar o detener un trabajo, desde la web o la app de escritorio."""
+    source: Literal["web", "desktop"]
+    tool: Tool
+    job_ref: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9_.:-]+$")
+    rating: int = Field(ge=1, le=5)
+    comment: str = Field(default="", max_length=500)
+    stopped: bool = False
+    details: dict = Field(default_factory=dict)  # resumen del trabajo (conteos); se limita al guardarlo
+
+    @field_validator("comment")
+    @classmethod
+    def _clean(cls, v: str) -> str:
+        return "".join(c for c in v if c.isprintable() or c == "\n").strip()
+
+
+class FeedbackOut(BaseModel):
+    detail: str
+    form_url: str | None = None   # solo si dejó comentario: invitación al Google Forms (acceso prioritario)

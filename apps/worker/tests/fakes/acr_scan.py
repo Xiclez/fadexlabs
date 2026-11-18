@@ -17,8 +17,11 @@ def hit(offset, played, title, artists, score=100, duration_ms=200000):
         "album": {"name": title}, "release_date": "2024-01-01", "label": "Sello", "genres": [{"name": "House"}]}}
 
 
+first = hit(0, 50, "Primer Tema (Extended Mix)", ["Artista Uno"])
+first["result"]["external_metadata"] = {"spotify": {"track": {"id": "SPOTIFY1"}}, "youtube": {"vid": "YTVID1"},
+                                        "deezer": {"track": {"id": 123}}}
 music = [
-    hit(0, 50, "Primer Tema (Extended Mix)", ["Artista Uno"]),
+    first,
     hit(52, 8, "Ruido De Transicion", ["Nadie"], score=40),              # débil: corto y score bajo → se filtra
     hit(60, 55, "Segundo Tema", ["Artista Dos", "Invitada"], score=85),
     hit(120, 110, "Verano 24 DJ Set Vol. 3", ["Otro DJ"], score=95),      # mix ajeno: no es un track

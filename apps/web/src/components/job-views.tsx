@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { FormMessage } from "@/components/auth-ui";
+import { FeedbackPrompt } from "@/components/feedback-prompt";
 import { ToolGate } from "@/components/tool-gate";
+import { TracklistWave } from "@/components/tracklist-wave";
 import { Button, ButtonLink, Container, CutCard, cx, Label } from "@/components/ui";
 import { api, ApiError, downloadFile, type Job, type JobPage, type JobStatus } from "@/lib/api";
 import { formatBytes, formatDate, formatDuration } from "@/lib/format";
@@ -20,6 +22,7 @@ const STATUS: Record<JobStatus, { label: string; className: string }> = {
   running: { label: "En proceso", className: "text-cyan" },
   done: { label: "Listo", className: "text-lime" },
   failed: { label: "No se pudo", className: "text-magenta" },
+  cancelled: { label: "Cancelado", className: "text-dim" },
   expired: { label: "Vencido", className: "text-dim" },
 };
 const FILE_LABEL: Record<string, string> = {
@@ -138,7 +141,7 @@ function JobDetailInner({ id }: { id: string }) {
 
   const tool = TOOL[job.tool];
   return (
-    <Container className="max-w-3xl py-16">
+    <Container className={cx("py-16", job.tool === "tracklist" && job.visual ? "max-w-5xl" : "max-w-3xl")}>
       <Link href="/herramientas/trabajos" className="fx-label text-muted hover:text-white">← Mis trabajos</Link>
       <div className="mt-6 flex flex-wrap items-baseline justify-between gap-3">
         <Label>{tool.name}</Label>
@@ -158,6 +161,7 @@ function JobDetailInner({ id }: { id: string }) {
               <p className="font-mono text-cyan">{job.progress}%</p>
             </div>
             <div className="mt-4"><ProgressBar job={job} /></div>
+            <StopControl job={job} onChange={setJob} />
             <p className="mt-4 text-sm text-muted">
               {job.status === "queued"
                 ? "Tu trabajo está en la fila: se procesa uno a la vez por herramienta."
@@ -177,9 +181,59 @@ function JobDetailInner({ id }: { id: string }) {
 
         {job.status === "expired" && <p className="text-muted">{job.message}. Los resultados se guardan 30 días.</p>}
 
+        {job.status === "cancelled" && (
+          <div>
+            <p className="text-muted">{job.message}</p>
+            <div className="mt-6"><ButtonLink href={tool.href}>Empezar otro</ButtonLink></div>
+          </div>
+        )}
+
         {job.status === "done" && <Result job={job} />}
+        {job.status === "done" && !job.feedback_given && <FeedbackPrompt job={job} />}
       </CutCard>
     </Container>
+  );
+}
+
+/** "Detener": en cola se cancela; en proceso se entrega lo conseguido hasta ese momento. Confirmación en línea. */
+function StopControl({ job, onChange }: { job: Job; onChange: (j: Job) => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState("");
+  if (job.stopping) {
+    return <p className="mt-4 text-sm text-cyan" role="status">Deteniendo: estamos armando lo conseguido hasta ahora…</p>;
+  }
+  async function stop() {
+    setPending(true);
+    setError("");
+    try {
+      onChange(await api<Job>(`/tools/jobs/${encodeURIComponent(job.id)}/stop`, { method: "POST" }));
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "No se pudo detener. Intenta de nuevo.");
+    } finally {
+      setPending(false);
+      setConfirming(false);
+    }
+  }
+  const what = job.status === "queued" ? "Se cancela y no se procesa."
+    : job.tool === "tracklist" ? "Recibirás el tracklist con lo reconocido hasta este momento."
+      : "Recibirás las pistas que ya se mejoraron hasta este momento.";
+  return (
+    <div className="mt-5">
+      {error && <div className="mb-3"><FormMessage kind="error">{error}</FormMessage></div>}
+      {confirming ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-magenta/40 bg-magenta/10 px-4 py-3" role="alertdialog"
+          aria-label="Confirmar detener">
+          <p className="text-sm">¿Detener ahora? {what}</p>
+          <div className="flex gap-2">
+            <Button type="button" onClick={stop} disabled={pending}>{pending ? "Deteniendo…" : "Sí, detener"}</Button>
+            <Button type="button" variant="ghost" onClick={() => setConfirming(false)} disabled={pending}>Seguir</Button>
+          </div>
+        </div>
+      ) : (
+        <Button type="button" variant="ghost" onClick={() => setConfirming(true)}>Detener</Button>
+      )}
+    </div>
   );
 }
 
@@ -224,6 +278,7 @@ function Result({ job }: { job: Job }) {
 
   return (
     <div>
+      {job.stopped && <p className="fx-label mb-2 text-cyan">Detenido por ti · resultados parciales</p>}
       <p className="font-display text-xl font-bold uppercase"><span className="fx-gradient-text">{job.message}</span></p>
       <dl className="mt-6 divide-y divide-line text-sm">
         {facts.filter(([, v]) => v).map(([k, v]) => (
@@ -278,6 +333,7 @@ function Result({ job }: { job: Job }) {
           </div>
         </div>
       )}
+      {job.tool === "tracklist" && job.visual && <TracklistWave jobId={job.id} />}
       {job.expires_at && <p className="mt-6 text-xs text-dim">Disponible hasta el {formatDate(job.expires_at)}</p>}
     </div>
   );

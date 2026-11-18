@@ -15,10 +15,11 @@ class Result:
     code: int | None
     timed_out: bool
     log: Path
+    stopped: bool = False  # lo detuvo el usuario (should_stop)
 
     @property
     def ok(self) -> bool:
-        return self.code == 0 and not self.timed_out
+        return self.code == 0 and not self.timed_out and not self.stopped
 
     def tail(self, chars: int = 1500) -> str:
         try:
@@ -55,9 +56,10 @@ async def _stop(proc: asyncio.subprocess.Process) -> None:
 
 async def run(cmd: list[str], *, log: Path, cwd: Path | None = None, env: dict | None = None,
               timeout: float | None = None, on_tick: Callable[[], Awaitable[None]] | None = None,
-              tick: float = 10) -> Result:
+              tick: float = 10, should_stop: Callable[[], Awaitable[bool]] | None = None) -> Result:
     """Corre `cmd` mandando su salida a `log`. Cada `tick` segundos llama a `on_tick` (para publicar
-    el progreso). Al pasar `timeout` detiene el proceso y devuelve timed_out=True."""
+    el progreso). Al pasar `timeout` detiene el proceso y devuelve timed_out=True; si `should_stop()` da
+    True (el usuario lo detuvo) lo detiene igual que con Ctrl+C y devuelve stopped=True."""
     log.parent.mkdir(parents=True, exist_ok=True)
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout if timeout else None
@@ -77,6 +79,9 @@ async def run(cmd: list[str], *, log: Path, cwd: Path | None = None, env: dict |
                     pass
                 if on_tick:
                     await on_tick()
+                if should_stop and await should_stop():
+                    await _stop(proc)
+                    return Result(proc.returncode, False, log, stopped=True)
                 if deadline is not None and loop.time() >= deadline:
                     await _stop(proc)
                     return Result(proc.returncode, True, log)

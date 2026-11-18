@@ -8,6 +8,7 @@ La librería de prueba tiene cuatro pistas:
 """
 import csv
 import io
+import uuid
 import zipfile
 
 import pytest
@@ -186,6 +187,32 @@ async def test_time_cap_delivers_what_was_downloaded(client, audio, slskd, monke
 
 
 FLAC = {"sampleRate": 44100, "bitDepth": 16, "bitRate": 900}
+
+
+async def test_stop_delivers_what_was_downloaded(client, audio, slskd, monkeypatch):
+    """El usuario pulsa "Detener" mientras una descarga sigue en cola: se entrega lo ya bajado y se cancela el resto."""
+    d, zp = audio
+    slskd.catalog = [c for c in slskd.catalog if c["username"] != "u_falso"]
+    slskd.offer("tercera rola", "u_ausente", "Music\\Grupo Tres\\Grupo Tres - Tercera Rola.flac", d / "falso_C.flac", 60,
+                stuck=True, **FLAC)
+    monkeypatch.setattr(get_settings(), "upgrade_song_timeout_seconds", 9999)
+    monkeypatch.setattr(get_settings(), "upgrade_candidate_wait_seconds", 9999)
+    access = await signup(client)
+    queued = await upload(client, access, zp, "library_upgrade", formato="aiff", accept_rights=True)
+    work = svc.job_dir(uuid.UUID(queued["id"])) / "work"
+
+    async def stop_once_searching(job_id):
+        state = library._load(work / "state.json", {})
+        return bool(state) and all(e["status"] != "pending" for e in state.values())
+
+    monkeypatch.setattr(jobs, "stop_requested", stop_once_searching)
+    job = await run_next()
+    assert job.status == "done", (job.message, job.error)
+    summary = job.result["summary"]
+    assert summary["stopped"] is True and summary["delivered"] >= 1 and summary["unfinished"] == 1
+    assert summary["notes"][0] == "Lo detuviste: se entrega lo conseguido hasta ese momento."
+    assert job.message.startswith("Detenido · ") and summary["delivery"] == "drive"
+    assert len(slskd.cancelled) == 1 and not [t for t in slskd.transfers if t["username"] == "u_ausente"]
 
 
 async def test_unresponsive_source_is_replaced_by_another(client, audio, slskd, monkeypatch):

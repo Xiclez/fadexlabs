@@ -42,6 +42,19 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from: str = "FADEX Labs <no-reply@fadexlabs.com>"
 
+    # EmailJS (https://www.emailjs.com): si está configurado tiene prioridad sobre SMTP. Desde el servidor exige
+    # la clave privada y activar "Allow EmailJS API for non-browser applications" (Account → Security).
+    # Dos plantillas (caben en el plan gratuito): una genérica para todos los avisos y otra para la encuesta.
+    emailjs_service_id: str = ""
+    emailjs_public_key: str = ""
+    emailjs_private_key: str = ""
+    emailjs_template_generic: str = ""
+    emailjs_template_feedback: str = ""
+
+    # Encuesta al terminar o detener un trabajo (web y app de escritorio)
+    feedback_to: str = "ibarraorvil@gmail.com"      # quién recibe las opiniones
+    feedback_form_url: str = ""                      # Google Forms para quien deja comentario (acceso prioritario)
+
     password_min_length: int = Field(default=10, ge=8)
 
     # Beta cerrada de las herramientas para DJs: los primeros N usuarios con email confirmado y WhatsApp
