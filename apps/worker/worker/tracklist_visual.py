@@ -140,10 +140,27 @@ def _load_shazam(path: Path | None) -> list[dict]:
     return out
 
 
-def enrich(csv_path: Path, acr_json: Path | None, shazam_jsonl: Path | None, duration: float | None) -> list[dict]:
+def _load_audd(path: Path | None) -> list[dict]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8")) if path and path.exists() else {}
+    except (OSError, ValueError):
+        return []
+    out = []
+    for r in data.get("results") or []:
+        song = max(r.get("songs") or [{}], key=lambda x: x.get("score") or 0)
+        out.append({"t": r.get("t", 0), "title": song.get("title", ""),
+                    "meta": {"album": song.get("album"), "label": song.get("label"),
+                             "year": (song.get("release_date") or "")[:4] or None, "isrc": song.get("isrc")}})
+    return out
+
+
+def enrich(csv_path: Path, acr_json: Path | None, shazam_jsonl: Path | None, duration: float | None,
+           audd_json: Path | None = None) -> list[dict]:
     with open(csv_path, encoding="utf-8-sig", newline="") as fh:
         rows = list(csv.DictReader(fh))
     acr, shz = _load_acr(acr_json), _load_shazam(shazam_jsonl)
+    # AudD y Shazam tienen la misma forma (fragmento en t con metadatos): se recorren igual, AudD primero
+    fragments = _load_audd(audd_json) + shz
     starts = [float(r.get("start_seconds") or 0) for r in rows]
     total = float(duration or 0) or (starts[-1] + 120 if starts else 0)
     tracks = []
@@ -157,12 +174,11 @@ def enrich(csv_path: Path, acr_json: Path | None, shazam_jsonl: Path | None, dur
                 if min(a["end"], end) - max(a["start"], start) > 0 and _same(a["title"], r["title"]):
                     meta.update({k: v for k, v in a["meta"].items() if v})
                     break
-            for z in shz:
+            for z in fragments:
                 if start - 12 <= z["t"] < end and _same(z["title"], r["title"]):
                     for k, v in z["meta"].items():
                         if v:
                             meta.setdefault(k, v)
-                    break
         conf = r.get("confianza") or ""
         tracks.append({
             "n": int(r.get("#") or i + 1), "start": start, "end": end, "artist": r.get("artist", ""),

@@ -23,7 +23,8 @@ else
   ask SLSK_USER    "Usuario de Soulseek SOLO para FADEX (distinto al de tu otro slskd; se crea solo)"
   ask SLSK_PASS    "Contraseña de ese usuario de Soulseek"
   ask RCLONE_DEST  "Carpeta de Drive para las entregas (remoto:carpeta)" "gdrive:FADEX/Entregas"
-  ask ACR_TOKEN    "Token de ACRCloud (Enter para dejarlo vacío: Tracklist ID usará solo Shazam)" ""
+  ask ACR_TOKEN    "Token de ACRCloud (Enter para dejarlo vacío)" ""
+  ask AUDD_TOKEN   "Token de AudD (Enter para dejarlo vacío; sin ninguno de los dos, Tracklist ID usará solo Shazam)" ""
   [[ -n "$SLSK_USER" && -n "$SLSK_PASS" ]] || { echo "El usuario y la contraseña de Soulseek son obligatorios."; exit 1; }
 
   PG_PASS=$(openssl rand -hex 24)
@@ -54,6 +55,7 @@ FADEX_SMTP_PASSWORD=
 # Herramientas
 FADEX_DATA_DIR=/data
 ACRCLOUD_TOKEN=$ACR_TOKEN
+AUDD_API_TOKEN=$AUDD_TOKEN
 FADEX_SLSKD_URL=http://slskd:5030
 FADEX_SLSKD_API_KEY=$SLSKD_KEY
 FADEX_SLSKD_DOWNLOADS_DIR=/data/slskd/downloads

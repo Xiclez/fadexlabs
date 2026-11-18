@@ -83,17 +83,21 @@ class Settings(BaseSettings):
     library_per_day: int = 2
     tools_init_per_hour: int = 30                    # rate limit de inicio/cierre de subidas por usuario
 
-    # Worker · Tracklist ID. El token de ACRCloud llega en ACRCLOUD_TOKEN (sin prefijo; solo al worker).
+    # Worker · Tracklist ID. Los tokens llegan en ACRCLOUD_TOKEN y AUDD_API_TOKEN (sin prefijo; solo al worker).
+    # ACRCloud y AudD son los motores principales y corren en paralelo; Shazam solo de reserva.
     tracklist_kbps: int = 96
     acr_max_seconds: int = 60 * 60
-    shazam_max_seconds: int = 15 * 60                # tope de Shazam cuando ACRCloud respondió (0 = sin Shazam)
-    shazam_fallback_max_seconds: int = 90 * 60       # tope cuando Shazam es el único motor (con pausas)
+    audd_max_seconds: int = 60 * 60
+    audd_skip: int = 1                               # tramos de 12 s saltados entre consultas (1 = mitad del costo)
+    audd_piece_seconds: int = 600                    # el set se manda a AudD en partes de este largo
+    shazam_max_seconds: int = 90 * 60                # tope de Shazam como reserva, con pausas (0 = sin Shazam)
     shazam_fail_streak: int = 4                      # fragmentos seguidos rechazados para pausar a Shazam
     shazam_cooldown_seconds: int = 300               # pausa cuando Shazam limita por IP; luego reintenta esos fragmentos
     shazam_max_cooldowns: int = 3                    # pausas antes de darlo por saturado
     tracklist_min_coverage: int = 50                 # % del set revisado bajo el cual el resultado se marca incompleto
     # Comandos alternativos (pruebas y humo sin red): reciben "<set> <salida>" como argumentos.
     acr_scan_cmd: str = ""
+    audd_scan_cmd: str = ""
     shazam_scan_cmd: str = ""
 
     # Worker · DJ Library Upgrader: slskd (Soulseek) propio de la plataforma + entrega por Google Drive.

@@ -20,7 +20,8 @@ os.environ.update({
     "FADEX_UPGRADE_SEARCH_DELAY": "0",     # sin pausas entre búsquedas ni entre revisiones
     "FADEX_UPGRADE_WATCH_SECONDS": "1",
 })
-os.environ.pop("ACRCLOUD_TOKEN", None)       # las pruebas nunca hablan con ACRCloud ni con Shazam
+os.environ.pop("ACRCLOUD_TOKEN", None)       # las pruebas nunca hablan con ACRCloud, AudD ni Shazam
+os.environ.pop("AUDD_API_TOKEN", None)
 WORKDIR.mkdir(exist_ok=True)
 
 import shutil  # noqa: E402
@@ -47,8 +48,9 @@ async def _clean(monkeypatch):
     email.outbox.clear()
     shutil.rmtree(WORKDIR / "data", ignore_errors=True)
     s = get_settings()
-    # por defecto: ACRCloud y Shazam simulados con respuestas fijas en el formato real
+    # por defecto: ACRCloud, AudD y Shazam simulados con respuestas fijas en el formato real
     monkeypatch.setattr(s, "acr_scan_cmd", f'"{PY}" "{FAKES / "acr_scan.py"}"')
+    monkeypatch.setattr(s, "audd_scan_cmd", f'"{PY}" "{FAKES / "audd_scan.py"}"')
     monkeypatch.setattr(s, "shazam_scan_cmd", f'"{PY}" "{FAKES / "shazam_scan.py"}"')
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.drop_all)

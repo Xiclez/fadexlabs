@@ -51,7 +51,8 @@ services:
     build: {context: ., dockerfile: apps/worker/Dockerfile}
     environment:
       <<: *api-env
-      ACRCLOUD_TOKEN: ${ACRCLOUD_TOKEN:-}               # sin token, Tracklist ID usa solo Shazam
+      ACRCLOUD_TOKEN: ${ACRCLOUD_TOKEN:-}               # ACRCloud y AudD: motores principales;
+      AUDD_API_TOKEN: ${AUDD_API_TOKEN:-}               # sin ninguno, Tracklist ID usa solo Shazam
       FADEX_SLSKD_URL: http://slskd:5030
       FADEX_SLSKD_API_KEY: ${FADEX_SLSKD_API_KEY:-}
       FADEX_SLSKD_DOWNLOADS_DIR: /data/slskd/downloads

@@ -32,6 +32,7 @@ const FILE_LABEL: Record<string, string> = {
   "no_encontradas.txt": "No encontradas (TXT)",
   "revision.csv": "Revisión de tu librería (CSV)",
 };
+const ENGINES: Record<string, string> = { acrcloud: "ACRCloud", audd: "AudD", shazam: "Shazam" };
 const active = (j: Job) => j.status === "queued" || j.status === "running";
 
 function StatusTag({ status }: { status: JobStatus }) {
@@ -259,7 +260,7 @@ function Result({ job }: { job: Job }) {
       ["Temas identificados", String(n("tracks"))],
       ["Tramos ID - ID", String(n("unidentified"))],
       ...(n("duration_seconds") ? [["Duración del set", formatDuration(n("duration_seconds"))] as [string, string]] : []),
-      ["Motores", (Array.isArray(s.sources) ? s.sources : []).map((x) => (x === "acrcloud" ? "ACRCloud" : "Shazam")).join(" + ")],
+      ["Motores", (Array.isArray(s.sources) ? s.sources : []).map((x) => ENGINES[String(x)] ?? String(x)).join(" + ")],
       ...(conf ? [["Confianza de las coincidencias", `${conf.alta ?? 0} alta · ${conf.media ?? 0} media · ${conf.baja ?? 0} baja`] as [string, string]] : []),
     ]
     : [

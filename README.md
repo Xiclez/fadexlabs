@@ -44,7 +44,8 @@ El worker de las herramientas, en otra terminal. Se corre **desde `apps/api`** p
 cd apps/api
 .venv/Scripts/pip install -r ../worker/requirements.txt
 set PYTHONPATH=..\worker
-set ACRCLOUD_TOKEN=...            &:: opcional; sin token, Tracklist ID usa solo Shazam
+set ACRCLOUD_TOKEN=...            &:: opcional: ACRCloud y AudD son los motores de Tracklist ID
+set AUDD_API_TOKEN=...            &:: opcional; sin ninguno de los dos, se usa solo Shazam
 .venv/Scripts/python -m worker.main
 ```
 
@@ -123,7 +124,8 @@ Además, un solo trabajo activo por usuario y herramienta.
 | Variable | |
 |---|---|
 | `FADEX_DATA_DIR` | carpeta compartida con la API (`uploads/`, `jobs/`, `slskd/downloads/`) |
-| `ACRCLOUD_TOKEN` | token de la consola de ACRCloud (sin prefijo). Sin él, solo Shazam |
+| `ACRCLOUD_TOKEN` | token de la consola de ACRCloud (sin prefijo). Motor principal de Tracklist ID |
+| `AUDD_API_TOKEN` | token del dashboard de AudD (sin prefijo). Segundo motor, en paralelo con ACRCloud |
 | `FADEX_SLSKD_URL`, `FADEX_SLSKD_API_KEY` | API del slskd de la plataforma |
 | `FADEX_SLSKD_DOWNLOADS_DIR` | dónde ve el worker las descargas de slskd (por defecto `<data>/slskd/downloads`) |
 | `FADEX_RCLONE_REMOTE`, `RCLONE_CONFIG` | destino en Drive (`gdrive:FADEX/Entregas`) y el `rclone.conf` |

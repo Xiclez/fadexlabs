@@ -1,13 +1,13 @@
-# Vendorizado de djset/tracklist.py (sin cambios).
+# Vendorizado de djset/tracklist.py, con AudD agregado para la plataforma (ver services/README.md).
 # No lo edites aquí: cambia el original y vuelve a copiarlo (ver services/README.md).
-"""Genera un tracklist con timestamps combinando ACRCloud (acr_scan.py) y/o Shazam (scan.py).
+"""Genera un tracklist con timestamps combinando ACRCloud (acr_scan.py), AudD (audd_scan.py) y/o Shazam (scan.py).
 
-Uso: python tracklist.py salida_base [--acr acr_raw.json] [--shazam raw.jsonl]
+Uso: python tracklist.py salida_base [--acr acr_raw.json] [--audd audd_raw.json] [--shazam raw.jsonl]
      [--min-hits 2] [--max-gap 2] [--id-gap 60]
 Genera salida_base.txt y salida_base.csv
 
-ACRCloud es la base (timestamps precisos, cubre todo el set). Shazam rellena los huecos
-y los tramos donde ACRCloud solo reconoció el mix de otro DJ.
+ACRCloud es la base (timestamps precisos, cubre todo el set). AudD y después Shazam rellenan, por capas,
+los huecos y los tramos donde lo anterior solo reconoció el mix de otro DJ.
 """
 import argparse
 import csv
@@ -71,9 +71,13 @@ def load_shazam(path, min_hits, max_gap):
                 rows.append((d["t"], tr.get("subtitle", ""), tr.get("title", "")))
     rows.sort()
     step = rows[1][0] - rows[0][0] if len(rows) > 1 else 20
+    out = group_hits(rows, step, window, "shazam", min_hits, max_gap)
+    return out, (rows[-1][0] + window if rows else 0)
 
-    # Agrupa por título normalizado (Shazam alterna entre versiones del mismo tema),
-    # tolerando hasta max_gap fragmentos fallidos o con otra coincidencia aislada.
+
+def group_hits(rows, step, window, source, min_hits, max_gap):
+    """Fragmentos (t, artista, título) → tramos. Agrupa por título normalizado (los motores alternan entre
+    versiones del mismo tema), tolerando hasta max_gap fragmentos fallidos o con otra coincidencia aislada."""
     groups = []
     for t, artist, title in rows:
         if not title:
@@ -85,9 +89,24 @@ def load_shazam(path, min_hits, max_gap):
             g["last"], g["hits"] = t, g["hits"] + 1
         else:
             groups.append({"key": key, "artist": artist, "title": title, "first": t, "last": t, "hits": 1})
-    out = [seg(g["first"], g["last"] + window, g["artist"], g["title"], "shazam", g["hits"])
+    out = [seg(g["first"], g["last"] + window, g["artist"], g["title"], source, g["hits"])
            for g in groups if g["hits"] >= min_hits]
-    return sorted(out, key=lambda s: s["start"]), (rows[-1][0] + window if rows else 0)
+    return sorted(out, key=lambda s: s["start"])
+
+
+# ---------- AudD ----------
+
+def load_audd(path, min_hits, max_gap):
+    """audd_raw.json de audd_scan.py: un tramo de `window` s cada `step` s con la mejor coincidencia."""
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    step, window = data.get("step") or 24, data.get("window") or 12
+    rows = []
+    for r in data.get("results") or []:
+        best = max(r.get("songs") or [{}], key=lambda s: s.get("score") or 0)
+        rows.append((r["t"], best.get("artist", ""), best.get("title", "")))
+    rows.sort()
+    return group_hits(rows, step, window, "audd", min_hits, max_gap), data.get("duration") or 0
 
 
 # ---------- Combinar ----------
@@ -96,22 +115,32 @@ def overlap(a, b):
     return max(0, min(a["end"], b["end"]) - max(a["start"], b["start"]))
 
 
-def combine(acr, shz):
-    """Base = ACRCloud sin mixes. Shazam aporta tracks donde ACRCloud no tiene nada
-    o solo un mix ajeno, y corrige el artista cuando ambos coinciden en el título."""
-    base = [dict(s) for s in acr if not s["mix"]]
+def layer(base, extra):
+    """Suma un motor sobre lo que ya hay. Donde coinciden en el título se anota que lo confirmó (Shazam además
+    corrige el artista); sus tracks entran donde lo anterior no tiene nada o solo un mix ajeno."""
     for s in base:
-        for z in shz:
+        for z in extra:
             if not z["mix"] and overlap(s, z) > 0 and norm(z["title"]) == norm(s["title"]):
-                s["artist"], s["source"] = z["artist"], "acrcloud+shazam"
+                if z["source"] == "shazam":
+                    s["artist"] = z["artist"]
+                if z["source"] not in s["source"].split("+"):
+                    s["source"] += "+" + z["source"]
                 break
-    for z in shz:
+    for z in extra:
         if z["mix"] or any(norm(z["title"]) == norm(s["title"]) and overlap(s, z) > 0 for s in base):
             continue
-        # se acepta si la mayor parte de su tramo no la cubre ya un track de ACRCloud
+        # se acepta si la mayor parte de su tramo no la cubre ya un track de otro motor
         covered = sum(overlap(z, s) for s in base)
         if covered < 0.5 * (z["end"] - z["start"]):
             base.append(dict(z))
+    return base
+
+
+def combine(acr, *others):
+    """Base = ACRCloud sin mixes; luego cada motor en `others`, en orden, como una capa más."""
+    base = [dict(s) for s in acr if not s["mix"]]
+    for extra in others:
+        base = layer(base, extra)
     base.sort(key=lambda s: s["start"])
 
     # une entradas consecutivas del mismo tema; también cuando un título incluye al otro
@@ -127,7 +156,9 @@ def combine(acr, shz):
         if p and same(p["title"], s["title"]):
             p["end"] = max(p["end"], s["end"])
             if "shazam" in s["source"] and "shazam" not in p["source"]:
-                p.update(artist=s["artist"], title=s["title"], source=p["source"] + "+shazam")
+                p.update(artist=s["artist"], title=s["title"])
+            known = p["source"].split("+")
+            p["source"] = "+".join(known + [x for x in s["source"].split("+") if x not in known])
         else:
             merged.append(s)
     return merged
@@ -157,19 +188,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("out_base")
     ap.add_argument("--acr", help="acr_raw.json de acr_scan.py")
+    ap.add_argument("--audd", help="audd_raw.json de audd_scan.py")
     ap.add_argument("--shazam", help="raw.jsonl de scan.py")
     ap.add_argument("--min-hits", type=int, default=2, help="coincidencias Shazam mínimas por track")
     ap.add_argument("--max-gap", type=int, default=2, help="fragmentos Shazam fallidos tolerados dentro de un track")
     ap.add_argument("--id-gap", type=int, default=60, help="segundos sin identificar para marcar ID - ID")
     a = ap.parse_args()
-    if not (a.acr or a.shazam):
-        ap.error("indica --acr y/o --shazam")
+    if not (a.acr or a.audd or a.shazam):
+        ap.error("indica --acr, --audd y/o --shazam")
 
     acr, total_a = load_acr(a.acr) if a.acr else ([], 0)
+    aud, total_d = load_audd(a.audd, a.min_hits, a.max_gap) if a.audd else ([], 0)
     shz, total_s = load_shazam(a.shazam, a.min_hits, a.max_gap) if a.shazam else ([], 0)
-    total = max(total_a or 0, total_s)
-    mixes = [s for s in acr + shz if s["mix"]]
-    tracks = build(combine(acr, shz), mixes, total, a.id_gap)
+    total = max(total_a or 0, total_d, total_s)
+    mixes = [s for s in acr + aud + shz if s["mix"]]
+    tracks = build(combine(acr, aud, shz), mixes, total, a.id_gap)
 
     lines = [f"{hms(t['start'])}  {t['artist']} - {t['title']}" for t in tracks]
     with open(a.out_base + ".txt", "w", encoding="utf-8") as f:

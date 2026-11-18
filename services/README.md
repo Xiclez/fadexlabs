@@ -5,13 +5,16 @@ subprocesos, igual que se usan a mano, así que se actualizan copiando de nuevo 
 
 | Carpeta | Origen | Qué hace |
 |---|---|---|
-| `tracklist/` | `Documents/djset` | `comprimir.py` → `acr_scan.py` → `scan.py` (Shazam) → `tracklist.py` |
+| `tracklist/` | `Documents/djset` | `comprimir.py` → `acr_scan.py` + `audd_scan.py` (→ `scan.py`, Shazam de reserva) → `tracklist.py` |
 | `library_upgrade/` | `Documents/dj-library-upgrader/upgrader` (antes `slskd-vpm`) | `biblioteca.py` → `slskd_fetch.py` → `collect.py` |
 
 Cambios respecto a los originales (al volver a copiar un original hay que reaplicarlos):
 
 - `tracklist/acr_scan.py`: el token llega solo por la variable de entorno `ACRCLOUD_TOKEN` (el original
   también leía `djset/.env`).
+- `tracklist/audd_scan.py`: nuevo, solo existe aquí (no está en djset). AudD por su endpoint enterprise,
+  en partes de `--piece` s; token por `AUDD_API_TOKEN`.
+- `tracklist/tracklist.py`: lee también `--audd` y combina por capas (ACRCloud → AudD → Shazam).
 - `tracklist/scan.py`: reintentos cortos por fragmento (`--attempts`, `--backoff`, `--query-timeout`) y
   corte por saturación: tras `--max-fail-streak` fragmentos rechazados seguidos termina con código 3 en vez
   de esperar hasta 10 minutos por fragmento. Antes de rendirse hace hasta `--max-cooldowns` pausas de
