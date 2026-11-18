@@ -14,7 +14,8 @@ Cambios respecto a los originales (al volver a copiar un original hay que reapli
   también leía `djset/.env`).
 - `tracklist/scan.py`: reintentos cortos por fragmento (`--attempts`, `--backoff`, `--query-timeout`) y
   corte por saturación: tras `--max-fail-streak` fragmentos rechazados seguidos termina con código 3 en vez
-  de esperar hasta 10 minutos por fragmento.
+  de esperar hasta 10 minutos por fragmento. Antes de rendirse hace hasta `--max-cooldowns` pausas de
+  `--cooldown` s y reintenta esos mismos fragmentos (Shazam bloquea por IP, sobre todo a los VPS).
 - `library_upgrade/slskd_fetch.py`: tiempos por canción. Si la descarga de un candidato no arranca en
   `--candidate-wait` s (o se estanca `--stall` s) se cancela en slskd y se prueba otro; si pasan
   `--song-timeout` s sin una descarga avanzando, la pista queda en estado `timeout` («pendiente» en

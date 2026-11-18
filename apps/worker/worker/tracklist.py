@@ -21,6 +21,7 @@ from worker import tracklist_visual as visual
 from worker.jobs import JobError
 
 TOOL = "tracklist"
+logger = logging.getLogger("fadex.worker.tracklist")
 
 
 def _cmd(override: str, name: str) -> list[str]:
@@ -158,7 +159,8 @@ async def run(job: ToolJob) -> dict:
 
     async def shazam() -> proc.Result:
         r = await proc.run([*_cmd(s.shazam_scan_cmd, "scan.py"), str(scan_set), str(shazam_jsonl),
-                            "--max-fail-streak", str(s.shazam_fail_streak)],
+                            "--max-fail-streak", str(s.shazam_fail_streak),
+                            "--cooldown", str(s.shazam_cooldown_seconds), "--max-cooldowns", str(s.shazam_max_cooldowns)],
                            log=work / "shazam.log", timeout=s.shazam_fallback_max_seconds, on_tick=publish,
                            should_stop=stop)
         state["shazam"] = ("listo" if r.ok else "detenido" if r.stopped else "saturado" if r.code == SATURATED else
@@ -191,7 +193,10 @@ async def run(job: ToolJob) -> dict:
             shazam_task.cancel()
             await asyncio.gather(shazam_task, return_exceptions=True)
 
-    # 3. Qué dio cada motor
+    # 3. Qué dio cada motor. work/ se borra al terminar: el motivo de un fallo queda en el log del worker.
+    for name, res, st in (("ACRCloud", acr_result, state["acr"]), ("Shazam", shazam_result, state["shazam"])):
+        if res and st not in ("listo", "detenido"):
+            logger.warning("trabajo %s: %s %s (código %s):\n%s", job.id, name, st, res.code, res.tail(800))
     stopped = "detenido" in (state["acr"], state["shazam"])
     sources, notes, args = [], [], []
     if stopped:
@@ -206,6 +211,8 @@ async def run(job: ToolJob) -> dict:
     else:
         notes.append("ACRCloud no está configurado: el tracklist se armó con Shazam.")
     scanned, hits = _shazam_stats(shazam_jsonl)
+    # qué parte del set se revisó: todo si ACRCloud respondió; si no, lo que alcanzó Shazam
+    coverage = 100 if state["acr"] == "listo" else min(100, round(100 * scanned / fragments))
     if hits:
         sources.append("shazam")
         args += ["--shazam", str(shazam_jsonl)]
@@ -235,12 +242,17 @@ async def run(job: ToolJob) -> dict:
 
     summary = _summary(results / "tracklist.csv", sources, notes, seconds)
     summary["stopped"] = stopped
+    summary["coverage"] = coverage
     found, ids = summary["tracks"], summary["unidentified"]
     message = f"{found} temas identificados" if found != 1 else "1 tema identificado"
     if ids:
         message += f", {ids} tramo{'s' if ids != 1 else ''} sin identificar"
     if stopped:
         message = "Detenido · " + message
+    elif coverage < s.tracklist_min_coverage:
+        # no se presenta como completo un set que los motores apenas revisaron
+        summary["incomplete"] = True
+        message = f"Incompleto · solo pudimos revisar el {coverage}% del set ({message}). Intenta de nuevo más tarde."
 
     # 5. Vista con forma de onda y enlaces (si falla, el tracklist se entrega igual)
     has_visual = False

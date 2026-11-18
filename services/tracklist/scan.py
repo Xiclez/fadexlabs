@@ -5,10 +5,13 @@
 
 Uso: python scan.py set.mp3 salida.jsonl [--step 20] [--window 12] [--pause 1.5]
        [--attempts 2] [--backoff 8] [--query-timeout 30] [--max-fail-streak 4]
+       [--cooldown 0] [--max-cooldowns 0]
 Si salida.jsonl ya existe, reanuda saltando los offsets ya consultados.
 
-Shazam limita por IP. Si rechaza --max-fail-streak fragmentos seguidos se da por saturado: el escaneo
-termina con código 3 y lo ya reconocido queda en salida.jsonl, para que el trabajo siga con otros motores.
+Shazam limita por IP. Si rechaza --max-fail-streak fragmentos seguidos, espera --cooldown s y vuelve a
+probar esos mismos fragmentos (hasta --max-cooldowns veces). Si sigue rechazando se da por saturado: el
+escaneo termina con código 3 y lo ya reconocido queda en salida.jsonl, para que el trabajo siga con otros
+motores.
 """
 import argparse
 import asyncio
@@ -58,7 +61,9 @@ async def main():
     ap.add_argument("--backoff", type=float, default=8, help="segundos de espera entre intentos de un fragmento")
     ap.add_argument("--query-timeout", type=float, default=30, help="segundos máximos por consulta")
     ap.add_argument("--max-fail-streak", type=int, default=4,
-                    help="fragmentos seguidos rechazados para dar a Shazam por saturado y terminar")
+                    help="fragmentos seguidos rechazados para pausar (o, sin pausas restantes, terminar)")
+    ap.add_argument("--cooldown", type=float, default=0, help="segundos de pausa cuando Shazam limita")
+    ap.add_argument("--max-cooldowns", type=int, default=0, help="pausas antes de darlo por saturado")
     a = ap.parse_args()
 
     total = duration(a.set)
@@ -72,9 +77,17 @@ async def main():
     shazam = Shazam(http_client=HTTPClient(retry_options=ExponentialRetry(
         attempts=3, max_timeout=20, statuses={500, 502, 503, 504, 429})))
     seg = os.path.join(tempfile.gettempdir(), f"shz_{os.getpid()}.wav")
-    streak, saturated = 0, False
+    failed, cooldowns, saturated = [], 0, False  # failed: offsets rechazados seguidos, aún sin escribir
+
+    def write(f, t, response):
+        f.write(json.dumps({"t": t, "window": a.window, "response": response}, ensure_ascii=False) + "\n")
+        f.flush()
+
     with open(a.out, "a", encoding="utf-8") as f:
-        for i, t in enumerate(todo, 1):
+        i = 0
+        while i < len(todo):
+            t = todo[i]
+            i += 1
             cut(a.set, t, a.window, seg)
             r = None
             for attempt in range(a.attempts):
@@ -87,18 +100,28 @@ async def main():
                     if attempt + 1 < a.attempts:
                         await asyncio.sleep(a.backoff)
             if r is None:
-                streak += 1
-                f.write(json.dumps({"t": t, "window": a.window, "response": {"error": "sin respuesta"}}) + "\n")
-                f.flush()
-                if streak >= a.max_fail_streak:
-                    saturated = True
-                    print(f"Shazam rechazó {streak} fragmentos seguidos: se da por saturado y se detiene "
-                          f"({i - streak} de {len(todo)} fragmentos escaneados en esta corrida)", flush=True)
-                    break
-                continue
-            streak = 0
-            f.write(json.dumps({"t": t, "window": a.window, "response": r}, ensure_ascii=False) + "\n")
-            f.flush()
+                failed.append(t)
+                if len(failed) < a.max_fail_streak:
+                    continue
+                if cooldowns < a.max_cooldowns:
+                    # pausa y se reintentan los mismos fragmentos: no se pierde ningún tramo del set
+                    cooldowns += 1
+                    print(f"Shazam rechazó {len(failed)} fragmentos seguidos: pausa {a.cooldown:.0f}s "
+                          f"({cooldowns} de {a.max_cooldowns}) y reintento", flush=True)
+                    i -= len(failed)
+                    failed = []
+                    await asyncio.sleep(a.cooldown)
+                    continue
+                for ft in failed:
+                    write(f, ft, {"error": "sin respuesta"})
+                saturated = True
+                print(f"Shazam rechazó {len(failed)} fragmentos seguidos: se da por saturado y se detiene "
+                      f"({i - len(failed)} de {len(todo)} fragmentos escaneados en esta corrida)", flush=True)
+                break
+            for ft in failed:  # rechazos sueltos entre aciertos: quedan registrados como sin respuesta
+                write(f, ft, {"error": "sin respuesta"})
+            failed = []
+            write(f, t, r)
             tr = r.get("track") or {}
             print(f"[{i}/{len(todo)}] {t//3600}:{t%3600//60:02d}:{t%60:02d}  "
                   f"{tr.get('subtitle', '-')} - {tr.get('title', '-')}", flush=True)

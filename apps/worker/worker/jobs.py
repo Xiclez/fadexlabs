@@ -65,7 +65,12 @@ async def finish(job_id: uuid.UUID, *, result: dict | None = None, failure: JobE
         return
     title = "Tracklist ID" if tool == "tracklist" else "DJ Library Upgrader"
     url = f"{s.public_url}/herramientas/trabajos/{job_id}"
-    if status == JobStatus.done:
+    if status == JobStatus.done and ((result or {}).get("summary") or {}).get("incomplete"):
+        body = (f"Hola,\n\nTu trabajo de {title} con «{name}» terminó a medias: {message}\n\n"
+                "Te entregamos lo que alcanzamos a reconocer. Si se repite, escríbenos por WhatsApp.")
+        subject = f"{title}: resultado incompleto · FADEX Labs"
+        heading, button = "Resultado incompleto", ("Ver lo reconocido", url)
+    elif status == JobStatus.done:
         body = (f"Hola,\n\nTu trabajo de {title} con «{name}» terminó: {message}\n\n"
                 f"Los resultados estarán disponibles {s.result_ttl_days} días.")
         subject = f"{title}: tu trabajo está listo · FADEX Labs"

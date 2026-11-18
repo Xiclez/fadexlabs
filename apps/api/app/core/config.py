@@ -87,8 +87,11 @@ class Settings(BaseSettings):
     tracklist_kbps: int = 96
     acr_max_seconds: int = 60 * 60
     shazam_max_seconds: int = 15 * 60                # tope de Shazam cuando ACRCloud respondió (0 = sin Shazam)
-    shazam_fallback_max_seconds: int = 60 * 60       # tope cuando Shazam es el único motor
-    shazam_fail_streak: int = 4                      # fragmentos seguidos rechazados para dar a Shazam por saturado
+    shazam_fallback_max_seconds: int = 90 * 60       # tope cuando Shazam es el único motor (con pausas)
+    shazam_fail_streak: int = 4                      # fragmentos seguidos rechazados para pausar a Shazam
+    shazam_cooldown_seconds: int = 300               # pausa cuando Shazam limita por IP; luego reintenta esos fragmentos
+    shazam_max_cooldowns: int = 3                    # pausas antes de darlo por saturado
+    tracklist_min_coverage: int = 50                 # % del set revisado bajo el cual el resultado se marca incompleto
     # Comandos alternativos (pruebas y humo sin red): reciben "<set> <salida>" como argumentos.
     acr_scan_cmd: str = ""
     shazam_scan_cmd: str = ""

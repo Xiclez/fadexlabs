@@ -129,7 +129,7 @@ async def test_shazam_time_cap(client, set_wav, monkeypatch):
     assert "Artista Dos, Invitada - Segundo Tema" in txt  # la base de ACRCloud está completa
 
 
-async def test_shazam_saturated_does_not_stop_the_job(client, set_wav, monkeypatch):
+async def test_shazam_saturated_does_not_stop_the_job(client, set_wav, monkeypatch, caplog):
     """Si Shazam rechaza peticiones se detiene solo ese motor; el trabajo termina con ACRCloud."""
     monkeypatch.setenv("FAKE_SHAZAM_SATURATED", "1")
     access = await signup(client)
@@ -140,12 +140,28 @@ async def test_shazam_saturated_does_not_stop_the_job(client, set_wav, monkeypat
     assert summary["sources"] == ["acrcloud", "shazam"] and summary["tracks"] == 3
     assert summary["notes"] == ["Shazam rechazó peticiones por saturación y se detuvo (alcanzó a revisar 22% del set)."]
 
-    # y si además ACRCloud no está, se entrega lo poco que Shazam alcanzó a reconocer
+    assert summary["coverage"] == 100 and "incomplete" not in summary  # ACRCloud revisó el set completo
+
+    # y si además ACRCloud no está, se entrega lo poco que Shazam alcanzó a reconocer, marcado como incompleto
     monkeypatch.setenv("FAKE_ACR_FAIL", "1")
+    sent = []
+
+    async def capture(to, subject, body, **kw):
+        sent.append(subject)
+
+    monkeypatch.setattr(email, "send", capture)
     await upload(client, access, set_wav, "tracklist")
     job = await run_next()
     assert job.status == "done", job.error
-    assert job.result["summary"]["sources"] == ["shazam"] and len(job.result["summary"]["notes"]) == 2
+    summary = job.result["summary"]
+    assert summary["sources"] == ["shazam"] and len(summary["notes"]) == 2
+    assert summary["coverage"] == 22 and summary["incomplete"] is True
+    assert job.message.startswith("Incompleto · solo pudimos revisar el 22% del set (1 tema identificado")
+    assert sent == ["Tracklist ID: resultado incompleto · FADEX Labs"]
+    # el motivo de cada motor queda en el log del worker (work/ se borra al terminar)
+    logged = "\n".join(r.getMessage() for r in caplog.records if r.name == "fadex.worker.tracklist")
+    assert "ACRCloud no disponible" in logged and "HTTP 503: simulado" in logged
+    assert "Shazam saturado" in logged
     assert "Artista Uno - PRIMER TEMA" in (svc.results_dir(job.id) / "tracklist.txt").read_text(encoding="utf-8")
 
 
@@ -161,6 +177,23 @@ def test_scan_stops_fast_when_shazam_rejects(set_wav, tmp_path):
     rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
     assert [bool(x["response"].get("track")) for x in rows] == [True] * 3 + [False] * 4  # 18 fragmentos: paró en el 7
     assert "se da por saturado" in r.stdout
+
+
+def test_scan_pauses_and_retries_when_shazam_blocks(set_wav, tmp_path):
+    """El scan.py real con pausas: si Shazam bloquea un rato, espera y reintenta esos mismos fragmentos."""
+    out = tmp_path / "raw.jsonl"
+    stub = FAKES / "shazamio_stub"
+    # reconoce 3, rechaza las 8 consultas siguientes (4 fragmentos × 2 intentos) y vuelve a responder
+    r = subprocess.run([sys.executable, str(proc.services_dir() / "tracklist" / "scan.py"), str(set_wav), str(out),
+                        "--pause", "0", "--backoff", "0", "--max-fail-streak", "4",
+                        "--cooldown", "0", "--max-cooldowns", "2"],
+                       env={**os.environ, "PYTHONPATH": str(stub), "STUB_SHAZAM_OK": "3", "STUB_SHAZAM_BLOCKED": "8"},
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, r.stdout + r.stderr
+    rows = [json.loads(line) for line in out.read_text(encoding="utf-8").splitlines()]
+    assert [x["t"] for x in rows] == list(range(0, 360 - 12 + 1, 20))   # los 18 fragmentos, sin huecos ni repetidos
+    assert all(x["response"].get("track") for x in rows)               # los bloqueados se reintentaron con éxito
+    assert "pausa 0s (1 de 2) y reintento" in r.stdout
 
 
 def test_confidence_scale():
